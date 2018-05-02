@@ -22,7 +22,7 @@
 #include "ShMemSymBuff.hpp"
 
 #define FFT_size dimension
-#define cp_size prefix
+#define cp_size 16
 #define numSymbols lenOfBuffer
 #define mode 1
 ShMemSymBuff* buffPtr;
@@ -38,10 +38,10 @@ namespace po = boost::program_options;
 void copy_to_shared_mem(int chan) {
 	//std::cout << "Here\n";
 	complexF* copy_to_mem = 0;
-	copy_to_mem = (complexF*)malloc((chan*(FFT_size+cp_size)*sizeof(*copy_to_mem)));
+	copy_to_mem = (complexF*)malloc((chan*(FFT_size)*sizeof(*copy_to_mem)));
 	for (int i = 0; i < numSymbols; i++) {
 		for (int j = 0; j < chan; j++) {
-			memcpy(&copy_to_mem[j*(FFT_size+cp_size)], &copy_buff[j][i*(FFT_size+cp_size)], (FFT_size+cp_size)*sizeof(*copy_to_mem));
+			memcpy(&copy_to_mem[j*(FFT_size)], &copy_buff[j][i*(FFT_size+cp_size)+cp_size], (FFT_size)*sizeof(*copy_to_mem));
 			/*
 			for (int k = 0; k < FFT_size+cp_size; k++) {
 				copy_to_mem[j*(FFT_size+cp_size) + k].real = copy_buff[j][i*(FFT_size+cp_size) + k].real();
