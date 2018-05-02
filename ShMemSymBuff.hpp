@@ -17,11 +17,11 @@
 #endif
 
 #ifndef dimension
-	#define dimension 1024
+	#define dimension 64
 #endif
 //64
 #ifndef prefix
-  #define prefix 64
+  #define prefix 16
 #endif
 
 #ifndef timerEnabled
@@ -35,7 +35,7 @@
 
 //100
 #ifndef lenOfBuffer
-	#define lenOfBuffer 100
+	#define lenOfBuffer 1588
 #endif
 #define numberOfSymbolsToTest lenOfBuffer
 #define shmemID "/blah"
@@ -117,13 +117,14 @@ complexF findAvgAndVar(float* times, int amt){
 void printTimes(bool cpu){
 	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
-	printf("\t Avg Time(s) \t Variance (s^2) \n");
-	printf("Read: \t %e \t %e \n", readtime.real, readtime.imag);
+	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
+	printf("Read: \t \t %e \t %e \n", readtime.real, readtime.imag);
+	printf("ChanEst: \t %e \n", decode[0]);
 	printf("Decode: \t %e \t %e \n", decodetime.real, decodetime.imag);
 	
 	if(cpu){
 		complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
-		printf("Drop: \t %e \t %e \n", dropTime.real, dropTime.imag);
+		printf("Drop: \t \t %e \t %e \n", dropTime.real, dropTime.imag);
 		
 	}
 }

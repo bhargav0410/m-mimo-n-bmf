@@ -208,6 +208,11 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 		Yf[j].real = Yf[j].real/Hsqrd[j].real;
 		Yf[j].imag = Yf[j].imag/Hsqrd[j].real;
 	}
+	
+	if(timerEn){
+		finish = clock();
+		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
 	if (it <= 1) {
 		outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
 	} else {
@@ -215,11 +220,7 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 	}
 	outfile.write((const char*)Yf, (cols-1)*sizeof(*Yf));
 	outfile.close();
-	
-	if(timerEn){
-		finish = clock();
-		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-	}
+
 	/*
 	if(testEn){
 		printOutArr(Yf, 1, cols-1);
@@ -271,12 +272,13 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	}
 	
 	//take conjugate of H
+	/*
 	for (int i = 0; i<rows; i++){  
 		for (int j = 0; j<cols-1; j++){
 			Hconj[i*(cols-1) + j].imag = -1*Hconj[i*(cols-1) + j].imag;
 		}
 	}
-	
+	*/
 	//Now Hconj holds H
 	//Save |H|^2 into X
 	findDistSqrd(Hconj,X,rows, cols-1);
@@ -310,7 +312,7 @@ int main(){
 	std::signal(SIGINT, &sig_int_handler);
 	
 	//Find H* (H conjugate) ->16x1023 and |H|^2 -> 1x1023
-	while (not stop_signal_called) {
+	//while (not stop_signal_called) {
 		firstVector(Y, Hconj, X, rows, cols);
 	
 		for(int i=1; i<numberOfSymbolsToTest; i++){
@@ -323,7 +325,7 @@ int main(){
 			doOneSymbol(Y, Hconj, X, rows, cols, i);
 			buffIter = i;
 		}
-	}
+	//}
 	
 	free(Y);
 	free(Hconj);

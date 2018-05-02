@@ -109,7 +109,7 @@ void findDistSqrd(complexF* H, complexF* Hsqrd, int rows, int cols){
 }
 
 //Removes prefix and moves all elements to look like a rows*cols array not rows*(cols+prefix)
-__global__ void dropPrefix(complexF* dY, int rows1, int cols1){
+__global__ void dropPrefix(complexF* Y, complexF* dY, int rows1, int cols1){
 	
 	int rows = rows1;
 	int cols= cols1;
@@ -125,7 +125,7 @@ __global__ void dropPrefix(complexF* dY, int rows1, int cols1){
 	
 	//DROP the prefix
 	//for(int i =0; i<rows; i++){
-		memcpy(&dY[i*cols], &dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
+		memcpy(&Y[i*cols], &dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
 	//}
 	
 			
@@ -203,24 +203,24 @@ void firstVector(complexF* dY, complexF* dH, complexF* dX, int rows, int cols){
 	
 	
 	// CUFFT plan -> do it one time before?
-    cufftHandle plan;
-    cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
-	cufftExecC2C(plan, (cufftComplex *)dY, (cufftComplex *)dY, CUFFT_FORWARD);
+	//cufftExecC2C(plan, (cufftComplex *)&dY, (cufftComplex *)&dY, CUFFT_FORWARD);
 	
 	
 	//Read in Y with prefix
 	buffPtr->readNextSymbolCUDA(dY, 0);
 	decode[0]=0;
 	//drop the prefix and move into first part of dY
+	complexF* Y = 0;
+	cudaMalloc((void**)&Y, rows*cols*sizeof(*Y));
 	if(prefix>0){
 		clock_t start, finish;
 		if(timerEn){
 			start = clock();
 		}
-		dropPrefix<< <numOfBlocks, threadsPerBlock >> >(dY, rows, cols);
+		dropPrefix<< <numOfBlocks, threadsPerBlock >> >(Y, dY, rows, cols);
 		if(timerEn){
 			finish = clock();
-			decode[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+			drop[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 		}
 	}
 	clock_t start, finish;
@@ -229,8 +229,11 @@ void firstVector(complexF* dY, complexF* dH, complexF* dX, int rows, int cols){
 	}
 	
 	//FFT(Y)
-	cufftExecC2C(plan, (cufftComplex *)dY, (cufftComplex *)dY, CUFFT_FORWARD);
-	
+	cufftComplex* org = (cufftComplex*)&Y;
+	cufftComplex* after = (cufftComplex*)&Y;
+	cufftHandle plan;
+    cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
+	cufftExecC2C(plan, org, after, CUFFT_FORWARD);	
 	/*
 	int c = cols-1;
 	for(int row=0; row<rows; row++){
@@ -249,7 +252,7 @@ void firstVector(complexF* dY, complexF* dH, complexF* dX, int rows, int cols){
 	*/
 	
 	//find Hcon and Hsqrd
-	findHs<< <numOfBlocks, threadsPerBlock >> >(dY, dH, dX, rows, cols);
+	findHs<< <numOfBlocks, threadsPerBlock >> >(Y, dH, dX, rows, cols);
 	
 	//H holds Hconj
 	cudaMemcpy(H, dH, sizeX*rows, cudaMemcpyDeviceToHost);
@@ -263,6 +266,8 @@ void firstVector(complexF* dY, complexF* dH, complexF* dX, int rows, int cols){
 		decode[0] = decode[0]+ ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
+	
+	//printOutArr(dH, rows, cols-1);
 	free(X);
 	free(H);
 	
@@ -275,8 +280,8 @@ __global__ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int ro
 	int cols= cols1;
     
     //find my work
-    int row = threadIdx.x;
-	
+    int row = blockIdx.x;
+	printf("Row: %d\n",row);
 	//Y x conj(H) -> then sum all rows into elements in Hsqrd
 	//Y = 16x1024+prefix
 	//conjH = 16x1023
@@ -308,16 +313,16 @@ __global__ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int ro
 	
 	complexF* Yf = 0;
 	Yf = (complexF*)malloc(rows*(cols-1)*sizeof(*Yf));
-	Yf = Y;
+	memcpy(&Yf[row*(cols-1)], &Y[row*cols], (cols-1)* sizeof (*Yf));
 	//Calculate product for every element in your row
 	for(int j=0; j<cols-1; j++){
-		float Yreal = Y[i*c+j].real;
-		float Yimag = Y[i*c+j].imag;
+		float Yreal = Yf[i*c+j].real;
+		float Yimag = Yf[i*c+j].imag;
 		float Hreal = Hconj[i*c+j].real;
 		float Himag = Hconj[i*c+j].imag;
 		//(a+bi)(c+di) = a*c - b*d + (bc + ad)i
-		Y[i*c+j].real=(Yreal*Hreal - Yimag*Himag);
-		Y[i*c+j].imag=(Yreal*Himag + Yimag*Hreal);	
+		Yf[i*c+j].real=(Yreal*Hreal - Yimag*Himag);
+		Yf[i*c+j].imag=(Yreal*Himag + Yimag*Hreal);	
 	}
 	
 	__syncthreads();
@@ -325,8 +330,8 @@ __global__ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int ro
 	if(row==0){
 		for(int r=1; r<rows; r++){
 			for(int j=0; j<cols-1; j++){
-				Y[j].real = Y[j].real + Y[r*c+j].real;
-				Y[j].imag = Y[j].imag + Y[r*c+j].imag;
+				Yf[j].real = Yf[j].real + Yf[r*c+j].real;
+				Yf[j].imag = Yf[j].imag + Yf[r*c+j].imag;
 			}
 		}
 		
@@ -362,16 +367,45 @@ void symbolPreProcess(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows1, i
 	//int i = row;
 	//int cp = cols+prefix;
 	
-	dropPrefix<< <numOfBlocks, threadsPerBlock >> >(Y, rows, cols);
-	
+	complexF* dY = 0;
+	cudaMalloc((void**)&dY, rows*cols*sizeof(*dY));
+	if(prefix>0){
+		clock_t start, finish;
+		if(timerEn){
+			start = clock();
+		}
+		dropPrefix<< <numOfBlocks, threadsPerBlock >> >(dY, Y, rows, cols);
+		if(timerEn){
+			finish = clock();
+			drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		}
+	}
+	clock_t start, finish;
+	if(timerEn){
+		start = clock();
+	}
 	//FFT(Y)
+	cufftComplex* org = (cufftComplex*)&dY;
+	cufftComplex* after = (cufftComplex*)&dY;
 	cufftHandle plan;
     cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
-	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
-	
-	doOneSymbol<< <numOfBlocks, threadsPerBlock >> >(Y, Hconj, Hsqrd, rows, cols, it);
+	cufftExecC2C(plan, org, after, CUFFT_FORWARD);
 	
 	
+	doOneSymbol<< <numOfBlocks, threadsPerBlock >> >(dY, Hconj, Hsqrd, rows, cols, it);
+	if(timerEn){
+		finish = clock();
+		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	
+}
+
+__global__ void printDims() {
+	int row = blockIdx.x;
+	int col = threadIdx.x;
+	printf("Block Index: %d\n",row);
+	printf("Thread Index: %d\n",col);
 }
 
 int main(){
@@ -380,7 +414,7 @@ int main(){
 	
 	printf("CUDA LS: \n");
 	printInfo();
-	
+	printDims<< <numOfBlocks, threadsPerBlock >> >();
 	//dY holds symbol with prefix
 	complexF *dY;
 	int size = (cols+prefix)*rows* sizeof (*dY);
@@ -402,6 +436,10 @@ int main(){
 	//Shared Memory
 	string shm_uid = shmemID;
 	buffPtr=new ShMemSymBuff(shm_uid, mode);
+	
+	cufftHandle plan;
+    cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
+	cufftExecC2C(plan, (cufftComplex *)&dY, (cufftComplex *)&dY, CUFFT_FORWARD);
 	
 	//Find H* (H conjugate) ->16x1023 and |H|^2 -> 1x1023
 	firstVector(dY, dH, dX, rows, cols);
@@ -430,15 +468,9 @@ int main(){
 		/*if(prefix>0){
 			dropPrefix<< <numOfBlocks, threadsPerBlock >> >(dY, rows, cols);
 		}*/
-		clock_t start, finish;
-		if(timerEn){
-			start = clock();
-		}
+		
 		symbolPreProcess(dY, dH, dX, rows, cols, i);
-		if(timerEn){
-			finish = clock();
-			decode[i] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-		}
+		
 		if(testEn){
 			//printf("Symbol #%d:\n", i);
 			//cuda copy it over
