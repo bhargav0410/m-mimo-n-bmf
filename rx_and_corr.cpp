@@ -39,9 +39,14 @@ void copy_to_shared_mem(int chan) {
 	//std::cout << "Here\n";
 	complexF* copy_to_mem = 0;
 	copy_to_mem = (complexF*)malloc((chan*(FFT_size)*sizeof(*copy_to_mem)));
+//	std::cout << "Num symbols: " << numSymbols << std::endl;
+//	std::cout << "Prefix: " << cp_size << std::endl;
+//	std::cout << "FFT size: " << FFT_size << std::endl;
 	for (int i = 0; i < numSymbols; i++) {
+//		std::cout << "Symbol: " << i+1 << std::endl;
 		for (int j = 0; j < chan; j++) {
 			memcpy(&copy_to_mem[j*(FFT_size)], &copy_buff[j][i*(FFT_size+cp_size)+cp_size], (FFT_size)*sizeof(*copy_to_mem));
+			//memcpy(&copy_to_mem[j*(FFT_size+cp_size)], &copy_buff[j][i*(FFT_size+cp_size)], (FFT_size+cp_size)*sizeof(*copy_to_mem));
 			/*
 			for (int k = 0; k < FFT_size+cp_size; k++) {
 				copy_to_mem[j*(FFT_size+cp_size) + k].real = copy_buff[j][i*(FFT_size+cp_size) + k].real();
@@ -270,7 +275,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 	boost::thread t;
 	size_t num_rx_samps;
 	while (not stop_signal_called){
-		corr_flag = false;
+		//corr_flag = false;
 		num_rx_samps = rx_stream->recv(buff_ptrs1, samps_per_buff, md, timeout);
 		stream_cmd.stream_now = true;
 		timeout = 0.5;
@@ -312,7 +317,8 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 				}
 				temp_iter = std::abs(temp[i])/((float)pn_buff.size());
 				if (temp_iter >= thres) {
-					//std::cout << "\n" << temp_iter << "\n";
+					std::cout << "\n" << temp_iter << "\n";
+					std::cout << "\n" << i << "\n";
 					length = i;
 					/*
 					outfilename = file + "_test_binary";
@@ -360,11 +366,11 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 		}
 		
 		
-		
 		if (copy_flag == true) {// and first_time == true) {
 			//Shared memory part
 			int ch = channel_nums.size();
 			t = boost::thread(copy_to_shared_mem, boost::ref(ch));
+			//t.join();
 			//iter++;
 			//if (iter > 1) break;
 			//first_time = false;

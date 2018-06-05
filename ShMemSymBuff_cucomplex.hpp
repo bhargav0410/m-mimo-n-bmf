@@ -6,7 +6,6 @@
 #include<fstream>
 #include <cstdlib>
 #include <cstring>
-#include <cuComplex.h>
 #include "CSharedMemSimple.hpp"
 
 //Timer
@@ -294,26 +293,21 @@ class ShMemSymBuff{
 			memcpy(Y,&buff->symbols[buff->readPtr].data[0], size);
 			*/
 			// read data from shared mem into Y
-		//	if (it == 1) {
+			if (it == 1) {
 			std::string file = "Sym_copy_sh_mem.dat";
-		//	cuFloatComplex Yf[rows*cols];
-			cuFloatComplex* Yf;
-			Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
+			complexF* Yf = 0;
+			Yf = (complexF*)malloc(rows*cols*sizeof(*Yf));
 			memcpy(Yf,&buff->symbols[buff->readPtr].data[0], size);
 			outfile.open(file.c_str(), std::ofstream::binary);
 			outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
 			outfile.close();
-		//	}
-			cudaMemcpy(dY, Yf, size, cudaMemcpyHostToDevice);
-			cudaDeviceSynchronize();
-			
+			}
+			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 			/*
 			for (int i = 0; i < cols; i++) {
-				printf("( %f, %f),",dY[i].x,dY[i].y);
+				printf("( %f, %f),",dY[i].real,dY[i].imag);
 			}
-			std::cout << std::endl;
 			*/
-			
 			if(timerEn){
 				finish = clock();
 				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
@@ -354,7 +348,6 @@ class ShMemSymBuff{
 			*/
 			// read data from shared mem into Y
 			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
-			cudaDeviceSynchronize();
 			//once you are done reading to that spot
 			int p = buff->readPtr+1;
 			//if you reach the end of the buffer

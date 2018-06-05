@@ -17,7 +17,7 @@
 */
 
 //! Install dependencies: apt-get -y install libboost-program-options-dev libfftw3-dev 
-//!How to Compile:   g++ -D prefix=64 -o ../build/examples/cpu cpuLS.cpp -lfftw3f -lrt
+//!How to Compile:   g++ -o cpu ../../examples/cpuLS.cpp -lfftw3f -lrt
 // ./cpu
 
 //LS
@@ -29,7 +29,7 @@ ShMemSymBuff* buffPtr;
 using namespace std;
 
 std::string file = "Output.dat";
-std::ofstream outfile;
+//std::ofstream outfile;
 /*
 if (not file.empty()) {
 	outfile.open(file.c_str(), std::ofstream::binary);
@@ -209,10 +209,14 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 		Yf[j].imag = Yf[j].imag/Hsqrd[j].real;
 	}
 	
+	int row = 0;
+	shiftOneRow(Yf, cols-1, row);
+	
 	if(timerEn){
 		finish = clock();
 		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
+	
 	if (it <= 1) {
 		outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
 	} else {
@@ -272,13 +276,13 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	}
 	
 	//take conjugate of H
-	/*
+	
 	for (int i = 0; i<rows; i++){  
 		for (int j = 0; j<cols-1; j++){
 			Hconj[i*(cols-1) + j].imag = -1*Hconj[i*(cols-1) + j].imag;
 		}
 	}
-	*/
+	
 	//Now Hconj holds H
 	//Save |H|^2 into X
 	findDistSqrd(Hconj,X,rows, cols-1);
