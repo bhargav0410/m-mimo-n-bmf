@@ -3,9 +3,11 @@
 #endif
 
 //Shared Memory 
-#include "ShMemSymBuff.hpp"
+#include "ShMemSymBuff_cucomplex.hpp"
 #include <cufft.h>
 #include <cuComplex.h>
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
 
 #define FFT_size dimension
 #define cp_size prefix
@@ -76,7 +78,7 @@ void matrix_readX(cuFloatComplex* X, int cols){
 	inFile.close();
 }
 
-__global__ void dropPrefix(cuFloatComplex* Y, cuFloatComplex* dY, int rows1, int cols1){
+__global__ void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1){
 	
 	int rows = rows1;
 	int cols= cols1;
@@ -92,12 +94,15 @@ __global__ void dropPrefix(cuFloatComplex* Y, cuFloatComplex* dY, int rows1, int
 	*/
 	
 	//DROP the prefix
-	//Y[i*cols + j] = dY[i*(cols+prefix) + j + prefix];
+	int tid = i*blockDim.x + j;
+	if(tid < rows*cols)
+		Y[tid] = dY[tid + prefix];
 	
+	/*
 	for(int i =0; i<rows; i++){
-		memcpy(&Y[i*cols], &dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
+		memcpy((void*)&Y[i*cols], (void*)&dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
 	}
-	
+	*/
 	
 			
 	
@@ -360,7 +365,7 @@ __global__ void doOneSymbol(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatCom
 
 
 
-void symbolPreProcess(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Hsqrd,int rows1, int cols1, int it) {
+void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, cuFloatComplex *Hsqrd,int rows1, int cols1, int it) {
 	int rows = rows1;
 	int cols= cols1;
     
@@ -389,13 +394,19 @@ void symbolPreProcess(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* 
 		}
 	}
 	if (it == 1) {
-	std::string file = "Prefix_drop.dat";
-	cuFloatComplex* Yf = 0;
-	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
-	cudaMemcpy(Yf, dY, rows*cols*sizeof(*Yf), cudaMemcpyDeviceToHost);
-	outfile.open(file.c_str(), std::ofstream::binary);
-	outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
-	outfile.close();
+		std::string file = "Prefix_drop.dat";
+		cuFloatComplex *Yf;
+		Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
+		cudaMemcpy(Yf, dY, rows*cols*sizeof(*Yf), cudaMemcpyDeviceToHost);
+		cudaDeviceSynchronize();
+		std::cout << "\n After Prefix drop:\n";
+		for (int j = 0; j < rows*(cols); j = j + cols) {
+			cout << "(" << Yf[j].x << ", " << Yf[j].y << ")\n";
+		}
+		
+		outfile.open(file.c_str(), std::ofstream::binary);
+		outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
+		outfile.close();
 	}
 	
 	clock_t start, finish;
@@ -435,22 +446,22 @@ int main(){
 	printf("CUDA LS: \n");
 	printInfo();
 	//dY holds symbol with prefix
-	cuFloatComplex* dY;
+	cuFloatComplex *dY;
 	int size = (cols+prefix)*rows* sizeof (*dY);
-	cudaMalloc((void**)&dY, size);
+	cudaMalloc((void**)&dY, (cols+prefix)*rows* sizeof (*dY));
 	
 	//dH (and Hconj) = 16x1023
-	cuFloatComplex* dH;
+	cuFloatComplex *dH;
 	size = rows*(cols-1)* sizeof (*dH);
-	cudaMalloc((void**)&dH, size);
+	cudaMalloc((void**)&dH, rows*(cols-1)* sizeof (*dH));
 	
 	//X = 1x1023 -> later can become |H|^2
-	cuFloatComplex* dX;
+	cuFloatComplex *dX;
 	size = (cols-1)* sizeof (*dX);
-	cudaMalloc((void**)&dX, size);
+	cudaMalloc((void**)&dX, (cols-1)* sizeof (*dX));
 	
-	cuFloatComplex* Yf;
-	Yf = (cuFloatComplex*)malloc(size);
+	cuFloatComplex *Yf;
+	Yf = (cuFloatComplex*)malloc((cols-1)* sizeof (*dX));
 	
 	//Shared Memory
 	string shm_uid = shmemID;
@@ -476,12 +487,12 @@ int main(){
 			if (i == 1) {
 				std::string file = "Sym_copy.dat";
 //				cuFloatComplex Yf_[rows*(cols+prefix)];
-				cuFloatComplex* Yf_;
+				cuFloatComplex *Yf_;
 				Yf_ = (cuFloatComplex*)malloc(rows*(cols+prefix)*sizeof(*Yf_));
 				cudaMemcpy(Yf_, dY, rows*(cols+prefix)*sizeof(*Yf_), cudaMemcpyDeviceToHost);
 				cudaDeviceSynchronize();
 				//printOutArr(Yf_,1,cols+prefix);
-					for (int j = 0; j < rows*(cols+prefix); j = j + 100) {
+					for (int j = 0; j < rows*(cols+prefix); j = j + cols+prefix) {
 						cout << "(" << Yf_[j].x << ", " << Yf_[j].y << ")\n";
 					}
 				outfile.open(file.c_str(), std::ofstream::binary);

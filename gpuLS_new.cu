@@ -467,15 +467,18 @@ int main(){
 		else{
 			buffPtr->readNextSymbolCUDA(dY,i);
 			if (i == 1) {
-			std::string file = "Sym_copy.dat";
-			complexF* Yf_ = 0;
-			Yf_ = (complexF*)malloc(rows*(cols+prefix)*sizeof(*Yf_));
-			cudaMemcpy(Yf_, dY, rows*(cols+prefix)*sizeof(*Yf_), cudaMemcpyDeviceToHost);
-			cudaDeviceSynchronize();
-			printOutArr(Yf_,1,cols+prefix);
-			outfile.open(file.c_str(), std::ofstream::binary);
-			outfile.write((const char*)Yf_, rows*(cols+prefix)*sizeof(*Yf_));
-			outfile.close();
+				std::string file = "Sym_copy.dat";
+				complexF* Yf_ = 0;
+				Yf_ = (complexF*)malloc(rows*(cols+prefix)*sizeof(*Yf_));
+				cudaMemcpy(Yf_, dY, rows*(cols+prefix)*sizeof(*Yf_), cudaMemcpyDeviceToHost);
+				cudaDeviceSynchronize();
+				//printOutArr(Yf_,1,cols+prefix);
+				for (int j = 0; j < rows*(cols+prefix); j = j + cols+prefix) {
+					cout << "(" << Yf_[j].real << ", " << Yf_[j].imag << ")\n";
+				}
+				outfile.open(file.c_str(), std::ofstream::binary);
+				outfile.write((const char*)Yf_, rows*(cols+prefix)*sizeof(*Yf_));
+				outfile.close();
 			}
 		}
 		symbolPreProcess(dY, dH, dX, rows, cols, i);

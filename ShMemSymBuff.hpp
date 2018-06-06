@@ -6,7 +6,6 @@
 #include<fstream>
 #include <cstdlib>
 #include <cstring>
-#include <cuComplex.h>
 #include "CSharedMemSimple.hpp"
 
 //Timer
@@ -275,7 +274,7 @@ class ShMemSymBuff{
 		
 		#ifdef cudaEn
 		//Read symbol into device memory with prefix
-		void readNextSymbolCUDA(cuFloatComplex* dY, int it){
+		void readNextSymbolCUDA(complexF *dY, int it){
 			int rows = numOfRows;
 			int cols = dimension+prefix;
 			
@@ -297,14 +296,14 @@ class ShMemSymBuff{
 		//	if (it == 1) {
 			std::string file = "Sym_copy_sh_mem.dat";
 		//	cuFloatComplex Yf[rows*cols];
-			cuFloatComplex* Yf;
-			Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
+			complexF *Yf;
+			Yf = (complexF*)malloc(rows*cols*sizeof(*Yf));
 			memcpy(Yf,&buff->symbols[buff->readPtr].data[0], size);
 			outfile.open(file.c_str(), std::ofstream::binary);
 			outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
 			outfile.close();
 		//	}
-			cudaMemcpy(dY, Yf, size, cudaMemcpyHostToDevice);
+			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 			cudaDeviceSynchronize();
 			
 			/*
@@ -333,7 +332,7 @@ class ShMemSymBuff{
 		}
 			
 		//Reads a last symbol into Y doesn't worry about changing ptr index to same as writer since last one
-		void readLastSymbolCUDA(cuFloatComplex* dY){
+		void readLastSymbolCUDA(complexF* dY){
 			int rows = numOfRows;
 			int cols = dimension+prefix;
 			

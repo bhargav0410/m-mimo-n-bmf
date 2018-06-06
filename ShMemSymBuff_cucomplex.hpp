@@ -6,6 +6,7 @@
 #include<fstream>
 #include <cstdlib>
 #include <cstring>
+#include <cuComplex.h>
 #include "CSharedMemSimple.hpp"
 
 //Timer
@@ -295,8 +296,8 @@ class ShMemSymBuff{
 			// read data from shared mem into Y
 			if (it == 1) {
 			std::string file = "Sym_copy_sh_mem.dat";
-			complexF* Yf = 0;
-			Yf = (complexF*)malloc(rows*cols*sizeof(*Yf));
+			cuFloatComplex* Yf = 0;
+			Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
 			memcpy(Yf,&buff->symbols[buff->readPtr].data[0], size);
 			outfile.open(file.c_str(), std::ofstream::binary);
 			outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
