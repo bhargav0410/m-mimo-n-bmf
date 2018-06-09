@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cuComplex.h>
+#include <complex>
 #include "CSharedMemSimple.hpp"
 
 //Timer
@@ -295,15 +296,24 @@ class ShMemSymBuff{
 			*/
 			// read data from shared mem into Y
 			if (it == 1) {
-			std::string file = "Sym_copy_sh_mem.dat";
-			cuFloatComplex* Yf = 0;
-			Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
-			memcpy(Yf,&buff->symbols[buff->readPtr].data[0], size);
-			outfile.open(file.c_str(), std::ofstream::binary);
-			outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
-			outfile.close();
+				std::string file = "Sym_copy_sh_mem.dat";
+				std::complex<float> Yf[rows*cols];
+			//	cuFloatComplex* Yf = 0;
+			//	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
+				memcpy(&Yf[0],&buff->symbols[buff->readPtr].data[0], size);
+				outfile.open(file.c_str(), std::ofstream::binary);
+				outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
+				outfile.close();
+			
+				cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
+				std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+				cudaDeviceSynchronize();
+				std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+				std::cout << "Copied from shared memory...\n";
+				
 			}
 			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
+
 			/*
 			for (int i = 0; i < cols; i++) {
 				printf("( %f, %f),",dY[i].real,dY[i].imag);
@@ -348,7 +358,14 @@ class ShMemSymBuff{
 			cudaMemcpy(dY, Y, size, cudaMemcpyHostToDevice);
 			*/
 			// read data from shared mem into Y
+		//	std::complex<float> Yf[rows*cols];
+		//	cuFloatComplex* Yf = 0;
+		//	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
+		//	memcpy(&Yf[0],&buff->symbols[buff->readPtr].data[0], size);
 			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
+			cudaDeviceSynchronize();
+			std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+//			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 			//once you are done reading to that spot
 			int p = buff->readPtr+1;
 			//if you reach the end of the buffer

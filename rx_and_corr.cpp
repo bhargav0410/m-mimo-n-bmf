@@ -37,15 +37,15 @@ namespace po = boost::program_options;
 
 void copy_to_shared_mem(int chan) {
 	//std::cout << "Here\n";
-	complexF* copy_to_mem = 0;
-	copy_to_mem = (complexF*)malloc((chan*(FFT_size)*sizeof(*copy_to_mem)));
+	std::complex<float>* copy_to_mem = 0;
+	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size+prefix)*sizeof(*copy_to_mem)));
 //	std::cout << "Num symbols: " << numSymbols << std::endl;
 //	std::cout << "Prefix: " << cp_size << std::endl;
 //	std::cout << "FFT size: " << FFT_size << std::endl;
 	for (int i = 0; i < numSymbols; i++) {
 //		std::cout << "Symbol: " << i+1 << std::endl;
 		for (int j = 0; j < chan; j++) {
-			memcpy(&copy_to_mem[j*(FFT_size)], &copy_buff[j][i*(FFT_size+cp_size)+cp_size], (FFT_size)*sizeof(*copy_to_mem));
+			memcpy(&copy_to_mem[j*(FFT_size+prefix)], &copy_buff[j][i*(FFT_size+prefix)], (FFT_size+prefix)*sizeof(*copy_to_mem));
 			//memcpy(&copy_to_mem[j*(FFT_size+cp_size)], &copy_buff[j][i*(FFT_size+cp_size)], (FFT_size+cp_size)*sizeof(*copy_to_mem));
 			/*
 			for (int k = 0; k < FFT_size+cp_size; k++) {

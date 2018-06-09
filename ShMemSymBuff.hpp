@@ -6,6 +6,7 @@
 #include<fstream>
 #include <cstdlib>
 #include <cstring>
+#include <complex>
 #include "CSharedMemSimple.hpp"
 
 //Timer
@@ -368,7 +369,7 @@ class ShMemSymBuff{
 		#endif
 		
 		//Writes a Symbol into this buffer
-		void writeNextSymbolWithWait(complexF* Yf){
+		void writeNextSymbolWithWait(std::complex<float>* Yf){
 			int rows = numOfRows;
 			int cols = dimension+prefix;
 			//writePtr==-1 to start
@@ -399,7 +400,7 @@ class ShMemSymBuff{
 			
 		}
 
-		void writeNextSymbolNoWait(complexF* Yf){
+		void writeNextSymbolNoWait(std::complex<float>* Yf){
 			int rows = numOfRows;
 			int cols = dimension+prefix;
 			//writePtr==-1 to start

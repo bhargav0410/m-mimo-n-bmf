@@ -229,6 +229,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, int
 			start = clock();
 		}
 		dropPrefix<< <numOfBlocks, threadsPerBlock >> >(Y, dY, rows, cols);
+		cudaDeviceSynchronize();
 		if(timerEn){
 			finish = clock();
 			drop[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
@@ -388,6 +389,7 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, cuFloatComplex *
 			start = clock();
 		}
 		dropPrefix<< <numOfBlocks, threadsPerBlock >> >(dY, Y, rows, cols);
+		cudaDeviceSynchronize();
 		if(timerEn){
 			finish = clock();
 			drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
@@ -399,6 +401,7 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, cuFloatComplex *
 		Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
 		cudaMemcpy(Yf, dY, rows*cols*sizeof(*Yf), cudaMemcpyDeviceToHost);
 		cudaDeviceSynchronize();
+		std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
 		std::cout << "\n After Prefix drop:\n";
 		for (int j = 0; j < rows*(cols); j = j + cols) {
 			cout << "(" << Yf[j].x << ", " << Yf[j].y << ")\n";
@@ -446,21 +449,21 @@ int main(){
 	printf("CUDA LS: \n");
 	printInfo();
 	//dY holds symbol with prefix
-	cuFloatComplex *dY;
-	int size = (cols+prefix)*rows* sizeof (*dY);
+	cuFloatComplex *dY = 0;
+	int size = (cols+prefix)*rows*sizeof(*dY);
 	cudaMalloc((void**)&dY, (cols+prefix)*rows* sizeof (*dY));
 	
 	//dH (and Hconj) = 16x1023
-	cuFloatComplex *dH;
+	cuFloatComplex *dH = 0;
 	size = rows*(cols-1)* sizeof (*dH);
 	cudaMalloc((void**)&dH, rows*(cols-1)* sizeof (*dH));
 	
 	//X = 1x1023 -> later can become |H|^2
-	cuFloatComplex *dX;
+	cuFloatComplex *dX = 0;
 	size = (cols-1)* sizeof (*dX);
 	cudaMalloc((void**)&dX, (cols-1)* sizeof (*dX));
 	
-	cuFloatComplex *Yf;
+	cuFloatComplex *Yf = 0;
 	Yf = (cuFloatComplex*)malloc((cols-1)* sizeof (*dX));
 	
 	//Shared Memory
@@ -477,8 +480,8 @@ int main(){
 	//dH holds h conj
 	//dX holds |H|^2
 	
-	for(int i=1; i<=numberOfSymbolsToTest; i++){
-		if(i==numberOfSymbolsToTest){
+	for(int i=1; i<numberOfSymbolsToTest; i++){
+		if(i==numberOfSymbolsToTest-1){
 			//if last one
 			buffPtr->readLastSymbolCUDA(dY);
 		}
@@ -491,6 +494,8 @@ int main(){
 				Yf_ = (cuFloatComplex*)malloc(rows*(cols+prefix)*sizeof(*Yf_));
 				cudaMemcpy(Yf_, dY, rows*(cols+prefix)*sizeof(*Yf_), cudaMemcpyDeviceToHost);
 				cudaDeviceSynchronize();
+				std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+				std::cout << "Copied back to CPU...\n";
 				//printOutArr(Yf_,1,cols+prefix);
 					for (int j = 0; j < rows*(cols+prefix); j = j + cols+prefix) {
 						cout << "(" << Yf_[j].x << ", " << Yf_[j].y << ")\n";

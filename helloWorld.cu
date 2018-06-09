@@ -3,9 +3,10 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "cuComplex.h"
+#include <complex>
 
 using namespace std;
-#define N 1023
+#define N 8192
 
 struct complexF{
 	float real;
@@ -36,25 +37,27 @@ int main() {
 	}
 	
 
-	cuFloatComplex a[N], b[N], ans[N];
+	std::complex<float> a[N], b[N], ans[N];
 	cuFloatComplex *dev_a, *dev_b, *c;
 	cudaMalloc((void**)&dev_a, N*sizeof(*dev_a));
 	cudaMalloc((void**)&dev_b, N*sizeof(*dev_b));
 	cudaMalloc((void**)&c, N*sizeof(*c));
 	for (int i = 0; i < N; i++) {
-		a[i].x = i;
-		a[i].y = i * 3;
-		b[i].x = i;
-		b[i].y = i * 3;
+		a[i] = std::complex<float>(i,i*3);
+		b[i] = std::complex<float>(i,i*3);
+	//	a[i].real = i;
+	//	a[i].imag = i * 3;
+	//	b[i].real = i;
+	//	b[i].imag = i * 3;
 	}
 	cudaMemcpy(dev_a, &a, N * sizeof(*dev_a), cudaMemcpyHostToDevice);
 	cudaMemcpy(dev_b, &b, N * sizeof(*dev_b), cudaMemcpyHostToDevice);
-	addNums <<<N,N>>>(dev_a, dev_b, c);
+	addNums <<<N/devProp.maxThreadsPerBlock,devProp.maxThreadsPerBlock>>>(dev_a, dev_b, c);
 	cudaMemcpy(ans, c, N * sizeof(*c), cudaMemcpyDeviceToHost);
 	cout << "\nThe answer is ";
 	for (int i = 0; i < N; i = i + 100) {
-		cout << "\n" << a[i].x << "+" << b[i].x << "=" << ans[i].x << ", ";
-		cout << "\n" << a[i].y << "+" << b[i].y << "=" << ans[i].y << ", ";
+		cout << "\n" << a[i].real() << "+" << b[i].real() << "=" << ans[i].real() << ", ";
+		cout << "\n" << a[i].imag() << "+" << b[i].imag() << "=" << ans[i].imag() << ", ";
 	}
 	return 0;
 }
