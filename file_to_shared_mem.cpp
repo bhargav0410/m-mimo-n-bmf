@@ -29,7 +29,7 @@ int main() {
 	printInfo();
 	std::signal(SIGINT, &sig_int_handler);
 	int iter = 1;
-	complexF* copy_to_mem = 0;
+	std::complex<float>* copy_to_mem = 0;
 	std::string shm_uid = shmemID;
 	buffPtr=new ShMemSymBuff(shm_uid, mode);
 	
@@ -57,7 +57,7 @@ int main() {
 		infile.close();
 	}
 	
-	copy_to_mem = (complexF*)malloc((chan*(FFT_size+cp_size)*sizeof(*copy_to_mem)));
+	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size+cp_size)*sizeof(*copy_to_mem)));
 	std::cout << "Copying to shared memory...\n";
 	//while(not stop_signal_called) {
 		for (int i = 0; i < numSymbols; i++) {
@@ -71,9 +71,9 @@ int main() {
 				}
 				*/
 			}
-			buffPtr->writeNextSymbolNoWait(copy_to_mem);
+			buffPtr->writeNextSymbolWithWait(copy_to_mem);
 		}
-		printOutArr(copy_to_mem,1,cp_size+FFT_size);
+	//	printOutArr(copy_to_mem,1,cp_size+FFT_size);
 		iter++;
 	//}
 	

@@ -178,15 +178,15 @@ class ShMemSymBuff{
 		}
 		
 		//Reads a whole symbol into Y -> use prefix definition to determine prefix
-		void readNextSymbol(complexF* Y, int it){
+		void readNextSymbol(cuFloatComplex* Y, int it){
 			int rows = numOfRows;
 			int cols = dimension;
 			
 			//writePtr==-1 to start
 			while(buff->writePtr ==-1);
 			
-			complexF* temp = 0;
-			temp=(complexF*)malloc(rows*(cols+prefix)* sizeof(*temp));
+			cuFloatComplex* temp = 0;
+			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof(*temp));
 
 			//can't read until writer writes
 			while(buff->writePtr == buff->readPtr );
@@ -241,7 +241,7 @@ class ShMemSymBuff{
 		}
 		
 		//Reads a last symbol into Y doesn't worry about changing ptr index to same as writer since last one
-		void readLastSymbol(complexF* Y){
+		void readLastSymbol(cuFloatComplex* Y){
 			int rows = numOfRows;
 			int cols = dimension;
 			
@@ -251,8 +251,8 @@ class ShMemSymBuff{
 			//can't read until writer writes
 			while(buff->writePtr == buff->readPtr );
 			
-			complexF* temp = 0;
-			temp=(complexF*)malloc(rows*(cols+prefix)* sizeof (*temp));
+			cuFloatComplex* temp = 0;
+			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
 			
 			
 			// read data from shared mem into temp
@@ -278,7 +278,7 @@ class ShMemSymBuff{
 		//Read symbol into device memory with prefix
 		void readNextSymbolCUDA(cuFloatComplex* dY, int it){
 			int rows = numOfRows;
-			int cols = dimension+prefix;
+			int cols = dimension;
 			
 			//writePtr==-1 to start
 			while(buff->writePtr ==-1);
@@ -288,13 +288,24 @@ class ShMemSymBuff{
 			if(timerEn){
 				start = clock();
 			}
-			int size = rows*(cols)* sizeof (*dY);
+			cuFloatComplex* temp = 0;
+			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
+			int size = rows*(cols+prefix)* sizeof (*temp);
+			if (prefix > 0) {
+				memcpy(temp, &buff->symbols[buff->readPtr].data[0], size);
+			} else {
+				int size= rows*(cols)* sizeof (*dY);
+				// read data from shared mem into Y
+				memcpy(&dY[it*rows*cols],&buff->symbols[buff->readPtr].data[0], size);
+			}
+				
 			/*
 			complexF* Y = 0;
 			Y = (complexF*)malloc(size);
 			memcpy(Y,&buff->symbols[buff->readPtr].data[0], size);
 			*/
 			// read data from shared mem into Y
+			/*
 			if (it == 1) {
 				std::string file = "Sym_copy_sh_mem.dat";
 				std::complex<float> Yf[rows*cols];
@@ -312,7 +323,9 @@ class ShMemSymBuff{
 				std::cout << "Copied from shared memory...\n";
 				
 			}
-			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
+			*/
+			
+			//memcpy(dY, &buff->symbols[buff->readPtr].data[0], size);
 
 			/*
 			for (int i = 0; i < cols; i++) {
@@ -323,6 +336,21 @@ class ShMemSymBuff{
 				finish = clock();
 				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
+			
+			if (prefix > 0) {
+				if(timerEn){
+					start = clock();
+				}
+				//drop the prefix
+				for(int i=0; i<rows; i++){
+					memcpy(&dY[(it)*(rows*cols) + i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
+				}
+				if(timerEn){
+					finish = clock();
+					drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				}
+			}
+			
 			//once you are done reading to that spot
 			int p = buff->readPtr+1;
 			//can't read until writer writes so don't change it yet
@@ -340,7 +368,7 @@ class ShMemSymBuff{
 		//Reads a last symbol into Y doesn't worry about changing ptr index to same as writer since last one
 		void readLastSymbolCUDA(cuFloatComplex* dY){
 			int rows = numOfRows;
-			int cols = dimension+prefix;
+			int cols = dimension;
 			
 			//writePtr==-1 to start
 			while(buff->writePtr ==-1);
@@ -348,7 +376,16 @@ class ShMemSymBuff{
 			//can't read until writer writes
 			while(buff->writePtr == buff->readPtr );
 			
-			int size = rows*(cols)* sizeof (*dY);
+			cuFloatComplex* temp = 0;
+			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
+			int size = rows*(cols+prefix)* sizeof (*temp);
+			if (prefix > 0) {
+				memcpy(temp, &buff->symbols[buff->readPtr].data[0], size);
+			} else {
+				int size= rows*(cols)* sizeof (*dY);
+				// read data from shared mem into Y
+				memcpy(&dY[(lenOfBuffer-1)*rows*cols],&buff->symbols[buff->readPtr].data[0], size);
+			}
 			/*
 			complexF* Y = 0;
 			Y = (complexF*)malloc(size);
@@ -362,10 +399,21 @@ class ShMemSymBuff{
 		//	cuFloatComplex* Yf = 0;
 		//	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
 		//	memcpy(&Yf[0],&buff->symbols[buff->readPtr].data[0], size);
-			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
-			cudaDeviceSynchronize();
-			std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-//			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
+		
+			if (prefix > 0) {
+				if(timerEn){
+					start = clock();
+				}
+				//drop the prefix
+				for(int i=0; i<rows; i++){
+					memcpy(&dY[(lenOfBuffer-1)*(rows*cols) + i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
+				}
+				if(timerEn){
+					finish = clock();
+					drop[lenOfBuffer-1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				}
+			}
+			
 			//once you are done reading to that spot
 			int p = buff->readPtr+1;
 			//if you reach the end of the buffer
