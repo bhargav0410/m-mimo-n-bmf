@@ -14,7 +14,7 @@
 
 //16 x 1024
 #ifndef numOfRows
-	#define numOfRows 16
+	#define numOfRows 8
 #endif
 
 #ifndef dimension

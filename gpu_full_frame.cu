@@ -308,17 +308,13 @@ __global__ void doOneSymbol(cuFloatComplex* out, cuFloatComplex* Y, cuFloatCompl
 	//Y x conj(H) -> then sum all rows into elements in Hsqrd
 	//Y = 16x1024+prefix
 	//conjH = 16x1023
-	int i = row;
+	int i = blockIdx.x;
 	int j = threadIdx.x;
-	//int cp = cols;
-	
-	
-	
 	int c = cols-1;
 	
 	cuFloatComplex* Yf = 0;
 	Yf = (cuFloatComplex*)malloc(rows*(cols-1)*sizeof(*Yf));
-	__shared__ cuFloatComplex temp[numOfBlocks*(threadsPerBlock-1)];
+	extern __shared__ cuFloatComplex temp[];
 	int tid = threadIdx.x;
 	for (int it = 1; it < lenOfBuffer; it++) {
 		if (j > 0) {
@@ -381,7 +377,7 @@ __global__ void doOneSymbol(cuFloatComplex* out, cuFloatComplex* Y, cuFloatCompl
 		__syncthreads();
 	}
 	free(Yf);
-	free(temp);
+	//free(temp);
 
 }
 
@@ -446,16 +442,16 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, cuFloatComplex *
 			free(Yf);
 		}
 	}
-	doOneSymbol<< <numOfBlocks, threadsPerBlock >> >(dY, Hconj, Hsqrd, rows, cols);
+	cuFloatComplex *out = 0;
+	cudaMalloc((void**)&out, (lenOfBuffer-1)*(cols-1)* sizeof (*out));
+	doOneSymbol<< <numOfBlocks, threadsPerBlock, (threadsPerBlock-1)*sizeof(*dY)>> >(out, dY, Hconj, Hsqrd, rows, cols);
 	cudaDeviceSynchronize();
-
-	std::cout << "Symbol " << it << ": " << cudaGetErrorString(cudaGetLastError()) << std::endl;
 	if(timerEn){
 		finish = clock();
 		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	}
-	cudaMemcpy(Y, &dY[(cols-1)], (lenOfBuffer-1)*(cols-1)*sizeof(*Y), cudaMemcpyDeviceToHost);
+	cudaMemcpy(Y, out, (lenOfBuffer-1)*(cols-1)*sizeof(*Y), cudaMemcpyDeviceToHost);
 	cudaDeviceSynchronize();
 	cudaFree(dY);
 }
