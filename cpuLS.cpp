@@ -28,7 +28,7 @@ ShMemSymBuff* buffPtr;
 
 using namespace std;
 
-std::string file = "Output.dat";
+std::string file = "Output_cpu.dat";
 //std::ofstream outfile;
 /*
 if (not file.empty()) {
@@ -195,6 +195,16 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 	for(int row=0; row<rows; row++){
 		//FFT one row 
 		fftOneRow(Y, cols, row);
+	}
+	if(timerEn){
+		finish = clock();
+		fft[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	if(timerEn){
+		start = clock();
+	}
+	for(int row=0; row<rows; row++){
 		memcpy(&Ytemp[row*(cols-1)], &Y[row*cols+1], (cols-1)* sizeof (*Y));
 		//shiftOneRow(Ytemp, cols-1, row);
 	}
@@ -208,10 +218,7 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 		Yf[j].real = Yf[j].real/Hsqrd[j].real;
 		Yf[j].imag = Yf[j].imag/Hsqrd[j].real;
 	}
-	
-	int row = 0;
-	shiftOneRow(Yf, cols-1, row);
-	
+	shiftOneRow(Yf, cols-1, 0);
 	if(timerEn){
 		finish = clock();
 		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
@@ -264,7 +271,16 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	for(int row=0; row<rows; row++){
 		//FFT one row 
 		fftOneRow(Y, cols, row);
-		
+	}
+	if(timerEn){
+		finish = clock();
+		fft[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	if(timerEn){
+		start = clock();
+	}
+	for(int row=0; row<rows; row++){
 		//Drop first element and copy it into Hconj
 		memcpy(&Hconj[row*(cols-1)], &Y[row*cols+1], (cols-1)* sizeof (*Y));
 		
@@ -298,8 +314,8 @@ int main(){
 	int cols = dimension;//dimension -> 1024
 	string shm_uid = shmemID;
 	
-	printf("CPU LS: \n");
-	printInfo();
+	//printf("CPU LS: \n");
+	//printInfo();
 	
 	//Y = 16x1024
 	complexF* Y = 0;
@@ -335,8 +351,10 @@ int main(){
 	free(Hconj);
 	free(X);
 	//delete buffPtr;
-	if(timerEn)
-		printTimes(true);
+	if(timerEn) {
+//		printTimes(true);
+		storeTimes(true);
+}
 	
 	return 0;
 

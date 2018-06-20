@@ -93,11 +93,10 @@ __global__ void dropPrefix(complexF* Y, complexF* dY, int rows1, int cols1){
 	
 	//DROP the prefix
 	//Y[i*cols + j] = dY[i*(cols+prefix) + j + prefix];
-	/*
+	
 	for(int i =0; i<rows; i++){
 		memcpy(&Y[i*cols], &dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
 	}
-	*/
 	
 			
 	

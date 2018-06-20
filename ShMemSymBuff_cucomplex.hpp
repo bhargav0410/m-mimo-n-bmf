@@ -15,15 +15,15 @@
 
 //16 x 1024
 #ifndef numOfRows
-	#define numOfRows 8
+	#define numOfRows 16
 #endif
 
 #ifndef dimension
-	#define dimension 64
+	#define dimension 1024
 #endif
 //64
 #ifndef prefix
-  #define prefix 16
+  #define prefix 72
 #endif
 
 #ifndef timerEnabled
@@ -38,7 +38,7 @@ std::ofstream outfile;
 
 //100
 #ifndef lenOfBuffer
-	#define lenOfBuffer 1588
+	#define lenOfBuffer 101
 #endif
 #define numberOfSymbolsToTest lenOfBuffer
 #define shmemID "/blah"
@@ -52,6 +52,7 @@ float readT[numberOfSymbolsToTest];
 float decode[numberOfSymbolsToTest];
 //Time to drop prefix
 float drop[numberOfSymbolsToTest];
+float fft[numberOfSymbolsToTest];
 
 //complexNumber
 struct complexF{
@@ -120,10 +121,12 @@ complexF findAvgAndVar(float* times, int amt){
 void printTimes(bool cpu){
 	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
+	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
 	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
 	printf("Read: \t \t %e \t %e \n", readtime.real, readtime.imag);
 	printf("ChanEst: \t %e \n", decode[0]);
 	printf("Decode: \t %e \t %e \n", decodetime.real, decodetime.imag);
+	printf("FFT: \t \t %e \t %e \n", FFTtime.real, FFTtime.imag);
 	
 	if(cpu){
 		complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
@@ -131,6 +134,27 @@ void printTimes(bool cpu){
 		
 	}
 }
+
+void storeTimes(bool cpu) {
+	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
+	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
+	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
+	complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
+	std::string file;
+	if (cpu == false){
+		file = "time_gpu.dat";
+	}
+	else {
+		file = "time_cpu.dat";
+	}
+	outfile.open(file.c_str(), std::ofstream::binary);
+	outfile.write((const char*)&readtime.real, sizeof(float));
+	outfile.write((const char*)&decode[0], sizeof(float));
+	outfile.write((const char*)&decodetime.real, sizeof(float));
+	outfile.write((const char*)&FFTtime.real, sizeof(float));
+	outfile.write((const char*)&dropTime.real, sizeof(float));
+}
+
 
 int buffIter = 0;
 
