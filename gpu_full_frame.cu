@@ -323,9 +323,7 @@ __global__ void doOneSymbol(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatCom
 		
 //		for (int j = 0; j < cols-1; j++) {
 	__shared__ cuFloatComplex temp[threadsPerBlock-1];
-	temp[j] = Y[it*rows*cols + row*(blockDim.x+1) + j + 1];
-	__syncthreads();
-	Yf[it*rows*(cols-1) + row*blockDim.x + j] = temp[j];
+	Yf[it*rows*(cols-1) + row*blockDim.x + j] = Y[it*rows*cols + row*(blockDim.x+1) + j + 1];
 	__syncthreads();
 //		}
 		
@@ -373,22 +371,22 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 	}
 	
 	clock_t start, finish;
-	for (int i = 0; i < lenOfBuffer-1; i++) {
-		fft[i] = 0;
+	//for (int i = 1; i < lenOfBuffer; i++) {
+		fft[0] = 0;
 		if(timerEn){
 			start = clock();
 		}
 		
 		//FFT(Y)
 		cufftHandle plan;
-		cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
-		cufftExecC2C(plan, (cufftComplex *)&dY[i*rows*cols], (cufftComplex *)&dY[i*rows*cols], CUFFT_FORWARD);
+		cufftPlan1d(&plan, cols, CUFFT_C2C, rows*(lenOfBuffer-1));
+		cufftExecC2C(plan, (cufftComplex *)&dY[rows*cols], (cufftComplex *)&dY[rows*cols], CUFFT_FORWARD);
 		cudaDeviceSynchronize();
 		if(timerEn){
 			finish = clock();
-			fft[i] = fft[i]+ ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+			fft[0] = fft[0]+ ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 		}
-	}
+	//}
 	
 	{
 		std::string file = "FFT_Out.dat";
@@ -410,9 +408,11 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 	if(timerEn){
 		start = clock();
 	}
-	for (int i = 0; i < lenOfBuffer-1; i++) {
-		decode[i+1] = 0;
-		doOneSymbol<< <numOfBlocks,(threadsPerBlock-1)>> >(dY, Hconj, Yf, rows, cols, i);
+	cudaStream_t streams[lenOfBuffer-1];
+	for (int i = 1; i < lenOfBuffer; i++) {
+		cudaStreamCreate(&streams[i-1]);
+		decode[i] = 0;
+		doOneSymbol<< <numOfBlocks,(threadsPerBlock-1), 0, streams[i-1]>> >(dY, Hconj, Yf, rows, cols, i);
 	}
 	cudaDeviceSynchronize();
 	/*
@@ -428,7 +428,7 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 		start = clock();
 	}
 	*/
-	for (int i = 0; i < lenOfBuffer-1; i++) {
+	for (int i = 1; i < lenOfBuffer; i++) {
 		for(int r=1; r<rows; r++){
 			for(int j=0; j<cols-1; j++){
 				Y[i*rows*(cols-1) + j]= cuCaddf(Y[i*rows*(cols-1) + j],Y[i*rows*(cols-1) + r*(cols-1)+j]);

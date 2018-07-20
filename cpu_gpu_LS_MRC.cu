@@ -551,7 +551,7 @@ int main(){
 	//delete buffPtr;
 	
 	if(timerEn) {
-	//	printTimes(true);
+		printTimes(true);
 		storeTimes(false);
 	}
 	return 0;
