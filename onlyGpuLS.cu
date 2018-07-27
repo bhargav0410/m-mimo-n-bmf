@@ -5,6 +5,7 @@
 //Shared Memory 
 #include "ShMemSymBuff_cucomplex.hpp"
 #include <cufft.h>
+#include <cublas_v2.h>
 #include <cuComplex.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -103,63 +104,70 @@ void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1){
 	for(int i =0; i<rows; i++){
 		memcpy(&Y[i*cols], &dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
 	}		
-	
 }
 
-__global__ void findHs(cuFloatComplex* dY,cuFloatComplex* dH,cuFloatComplex* dX,int rows1,int cols1){
-	
-	//int rows = rows1;
-	int cols=cols1;
-	int rows = rows1;
+__device__ cuFloatComplex tempDev[numOfBlocks*(threadsPerBlock-1)];
+__global__ void reshapeSym(cuFloatComplex* Y, cuFloatComplex* Yf){
 	int row = blockIdx.x;
-	int j = threadIdx.x;
+	int col = threadIdx.x;
+	tempDev[row*blockDim.x + col] = Yf[col*blockDim.x + row];
+	__syncthreads();
+	Y[row*blockDim.x + col] = tempDev[row*blockDim.x + col];
+	__syncthreads();	
+}
+
+__global__ void findHs(cuFloatComplex* dY,cuFloatComplex* dH,cuFloatComplex* dX,int rows1,int cols1){	
+	int cols=cols1;
 	//find my work
 	//Drop first element and copy it into Hconj
-	/*
-	__shared__ cuFloatComplex temp[threadsPerBlock-1];
-	temp[j] = dY[row*(blockDim.x+1) + j + 1];
-	__syncthreads();
-	dH[row*blockDim.x + j] = temp[j];
-	__syncthreads();
-	*/
-	dH[row*blockDim.x + j] = dY[row*(blockDim.x+1) + j + 1];
+	dH[blockIdx.x*blockDim.x + threadIdx.x] = dY[blockIdx.x*(blockDim.x + 1) + threadIdx.x + 1];
 	__syncthreads();
 	
 	//complex division
 	//H/X where H = FFT(Y) (w/ dropped first element)
 	//Then take conjugate of H
-	int i = blockIdx.x;
-	//int j = threadIdx.x;
-	//for(int j=0; j<c; j++){
-	if (j < (cols-1)) {
-		//dH[i*blockDim.x + j] = dY[i*blockDim.x + j + 1];
-		dH[row*blockDim.x + j] = cuCdivf(dH[row*blockDim.x + j], dX[row*blockDim.x + j]);
-		dH[row*blockDim.x + j] = cuConjf(dH[row*blockDim.x + j]);
+	if (threadIdx.x < (cols-1)) {
+		dH[blockIdx.x*blockDim.x + threadIdx.x] = cuCdivf(dH[blockIdx.x*blockDim.x + threadIdx.x], dX[blockIdx.x*blockDim.x + threadIdx.x]);
+		dH[blockIdx.x*blockDim.x + threadIdx.x] = cuConjf(dH[blockIdx.x*blockDim.x + threadIdx.x]);
+		dX[blockIdx.x*blockDim.x + threadIdx.x].x = dH[blockIdx.x*blockDim.x + threadIdx.x].x * dH[blockIdx.x*blockDim.x + threadIdx.x].x + dH[blockIdx.x*blockDim.x + threadIdx.x].y * dH[blockIdx.x*blockDim.x + threadIdx.x].y;
 	}
-	//}
 	__syncthreads();
 	//Now dH holds conj H
+	
+	
 }
 
-void findDistSqrd(cuFloatComplex* H, float* Hsqrd, int rows, int cols){
-	//initialize first row since Hsqrd currently holds X
-	for (int j = 0; j<cols; j++){
-		Hsqrd[j] = 0;
-		//|H|^2 = real^2 + imag^2
-		//Sum of |H|^2 is summing all elements in col j
-		Hsqrd[j] = H[j].x*H[j].x + H[j].y*H[j].y;
-		//Hsqrd[j].y = 0;
-	}
+
+__global__ void findDistSqrd(cuFloatComplex* H, float* Hsqrd, int rows, int cols){
+	int tid = blockIdx.x*blockDim.x + threadIdx.x;
+	extern __shared__ cuFloatComplex temp[];
+	int sid = threadIdx.x*cols + blockIdx.x;
+	temp[threadIdx.x] = H[sid];
+	//temp[col].x = temp[col].x*temp[col].x + temp[col].y*temp[col].y;
+//	temp[threadIdx.x].x = tempLocal.x * tempLocal.x + tempLocal.y * tempLocal.y;
+//	__syncthreads();
 	
-	for (int i = 1; i<rows; i++){  
-		for (int j = 0; j<cols; j++){
-			//|H|^2 = real^2 + imag^2
-			//Sum of |H|^2 is summing all elements in col j
-			Hsqrd[j] = Hsqrd[j] + (H[i*cols + j].x*H[i*cols + j].x + H[i*cols + j].y*H[i*cols + j].y);
+	
+	for (int i = 1; i < rows; i = i*2) {
+		if (threadIdx.x%(2*i) == 0) {
+			temp[threadIdx.x].x += temp[threadIdx.x+i].x;
 		}
+		__syncthreads();
 	}
 	
+	
+	if(threadIdx.x == 0) {
+		Hsqrd[blockIdx.x] = temp[threadIdx.x].x;
+	/*	
+		Hsqrd[blockIdx.x] = 0;
+		for (int i = 0; i < numOfBlocks; i++) {
+			
+			Hsqrd[blockIdx.x] = Hsqrd[blockIdx.x] + H[i*cols + blockIdx.x].x;
+		}
+		*/
+	}
 }
+
 
 void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, float* Hsqrd, int rows, int cols){
 	clock_t start, finish;
@@ -202,24 +210,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 		finish = clock();
 		readT[0] = readT[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-//	std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-	
-	/*
-	if(prefix>0){
-		clock_t start, finish;
-		if(timerEn){
-			start = clock();
-		}
-		dropPrefix(Y, dY, rows, cols);
-		cudaDeviceSynchronize();
-		if(timerEn){
-			finish = clock();
-			drop[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-		}
-	}
-	*/
-	
-		//cufftExecC2C(plan, (cufftComplex *)dY, (cufftComplex *)dY, CUFFT_FORWARD);
+
 	
 	if(timerEn){
 		start = clock();
@@ -237,40 +228,26 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 	}
 	
 	//find Hconj and Hsqrd
-	if(timerEn){
-		start = clock();
-	}
-	findHs<< <numOfBlocks,threadsPerBlock-1 >> >(Y, dH, dX, rows, cols);
-	cudaDeviceSynchronize();
-	/*
-	if(timerEn){
-		finish = clock();
-		decode[0] = decode[0]+ ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-	}
-	*/
-	//std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
 	cuFloatComplex *H = 0;
-	H = (cuFloatComplex*)malloc(rows*(cols-1)*sizeof(*H));
-	cudaMemcpy(H, dH, rows*(cols-1)*sizeof(*dH), cudaMemcpyDeviceToHost);
-	cudaDeviceSynchronize();
-	//std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-	
-	//H holds Hconj
-	//cudaMemcpy(H, dH, sizeX*rows, cudaMemcpyDeviceToHost);
-	/*
+	cudaMalloc((void**)&H, rows*(cols-1)* sizeof (*H));
 	if(timerEn){
 		start = clock();
 	}
-	*/
+//	dim3 dimBlock(numOfBlocks, threadsPerBlock-1);
+	findHs<< <numOfBlocks, threadsPerBlock-1>> >(Y, dH, dX, rows, cols);
+	cudaDeviceSynchronize();
+	std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+//	reshapeSym<< <numOfBlocks,threadsPerBlock-1 >> >(H, dH);
+//	cudaDeviceSynchronize();
 	//Save |H|^2 into Hsqrd
-	findDistSqrd(H,Hsqrd,rows, cols-1);
-	
+	findDistSqrd<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(dX,Hsqrd,rows, cols-1);
+	cudaDeviceSynchronize();
 	
 	if(timerEn){
 		finish = clock();
 		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-	/*
+	
 	std::string file = "Chan_est.dat";
 	cuFloatComplex* Yf;
 	Yf = (cuFloatComplex*)malloc(rows*(cols-1)*sizeof(*Yf));
@@ -281,18 +258,18 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 	outfile.open(file.c_str(), std::ofstream::binary);
 	outfile.write((const char*)Yf, rows*(cols-1)*sizeof(*Yf));
 	outfile.close();
-	*/
-	/*
-	memcpy(Yf, Hsqrd, (cols-1)*sizeof(*Hsqrd));
+	cudaDeviceSynchronize();
+	std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+	
+	cudaMemcpy(Yf, Hsqrd, (cols-1)*sizeof(*Hsqrd), cudaMemcpyDeviceToHost);
 	std::cout << "After Squared...\n";
 	file = "Dist_sqrd.dat";
 	outfile.open(file.c_str(), std::ofstream::binary);
-	outfile.write((const char*)Yf, (cols-1)*sizeof(*Yf));
+	outfile.write((const char*)Yf, rows*(cols-1)*sizeof(*Hsqrd));
 	outfile.close();
-	*/
 	
 	free(X);
-	free(H);
+	cudaFree(H);
 	
 	//dH holds H conj
 	//dX holds {H^2)	
@@ -308,38 +285,51 @@ __global__ void doOneSymbol(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatCom
 	//Y = 16x1024+prefix
 	//conjH = 16x1023
 	int row = blockIdx.x;
-	/*
-	if (row == 0) {
-		printf("%d\n",gridDim.x);
-	}
-	__syncthreads();
-	*/
 	int j = threadIdx.x;
-	
-//	for (int i = 0; i < rows; i++) {
-		
-//		for (int j = 0; j < cols-1; j++) {
-	/*
-	__shared__ cuFloatComplex temp[threadsPerBlock-1];
-	temp[j] = Y[row*(blockDim.x+1) + j + 1];
-	__syncthreads();
-	Yf[row*blockDim.x + j] = temp[j];
-	__syncthreads();
-	*/
 	Yf[row*blockDim.x + j] = Y[row*(blockDim.x+1) + j + 1];
 	__syncthreads();
-//		}
-		
-		//memcpy(&Yf[i*(cols-1)], &Y[i*cols+1], (cols-1)* sizeof (*Yf));
-//	}
 	
 	if (j < cols-1) {
-	//	Yf[i*c + j] = Y[i*c + j + 1];
 		Yf[row*blockDim.x + j] = cuCmulf(Yf[row*blockDim.x + j],Hconj[row*blockDim.x + j]);
 	}
 	__syncthreads();
-	//free(temp);
 }
+
+
+__global__ void combineForMRC(cuFloatComplex *Y, float *Hsqrd, int rows, int cols) {
+	
+	int row = blockIdx.x;
+	int col = threadIdx.x;
+	int tid = blockIdx.x*blockDim.x + threadIdx.x;
+	extern __shared__ cuFloatComplex temp[];
+	int sid = threadIdx.x*cols + blockIdx.x;
+	temp[col] = Y[sid];
+	
+	for (int i = 1; i < rows; i = i*2) {
+		if (threadIdx.x%(2*i) == 0) {
+			temp[col] = cuCaddf(temp[col],temp[col+i]);
+		}
+		__syncthreads();
+	}
+	
+	if (col == 0) {
+		Y[row].x = temp[col].x/Hsqrd[row];
+		Y[row].y = temp[col].y/Hsqrd[row];
+		__syncthreads();
+	}
+	
+	/*
+	if (threadIdx.x == 0) {
+		for (int i = 1; i < numOfRows; i++) {
+			Y[blockIdx.x] = cuCaddf(Y[blockIdx.x],Y[i*cols + blockIdx.x]);
+		}
+		Y[blockIdx.x].x = Y[blockIdx.x].x/Hsqrd[blockIdx.x];
+		Y[blockIdx.x].y = Y[blockIdx.x].y/Hsqrd[blockIdx.x];
+	}
+	*/
+	
+}
+
 
 void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int rows1, int cols1, int it) {
 	int rows = rows1;
@@ -362,28 +352,6 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 		finish = clock();
 		readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-//	std::cout << "Symbol " << it << ": " << cudaGetErrorString(cudaGetLastError()) << std::endl;
-	
-
-	/*
-	if (it == 1) {
-		std::string file = "Prefix_drop.dat";
-		cuFloatComplex *Yf;
-		Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
-		cudaMemcpy(Yf, dY, rows*cols*sizeof(*Yf), cudaMemcpyDeviceToHost);
-		cudaDeviceSynchronize();
-		std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-		std::cout << "\n After Prefix drop:\n";
-		for (int j = 0; j < rows*(cols); j = j + cols) {
-			cout << "(" << Yf[j].x << ", " << Yf[j].y << ")\n";
-		}
-		
-		outfile.open(file.c_str(), std::ofstream::binary);
-		outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
-		outfile.close();
-		free(Yf);
-	}
-	*/
 	
 	if(timerEn){
 		start = clock();
@@ -399,30 +367,15 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 		fft[it] = fft[it]+ ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
-	/*
-	if (it == 1) {
-		std::string file = "FFT_Out.dat";
-		cuFloatComplex* Yf;
-		Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
-		cudaMemcpy(Yf, dY, rows*cols*sizeof(*Yf), cudaMemcpyDeviceToHost);
-		cudaDeviceSynchronize();
-		std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-		std::cout << "After FFT...\n";
-		outfile.open(file.c_str(), std::ofstream::binary);
-		outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
-		outfile.close();
-		free(Yf);
-	}
-	*/
-	
 	cuFloatComplex* Yf = 0;
 	cudaMalloc((void**)&Yf, rows*(cols-1)* sizeof (*Yf));
 	
 	if(timerEn){
 		start = clock();
 	}
-	doOneSymbol<< <numOfBlocks,(threadsPerBlock-1)>> >(dY, Hconj, Yf, rows, cols);
+	doOneSymbol<< <numOfBlocks, threadsPerBlock-1>> >(dY, Hconj, Yf, rows, cols);
 	cudaDeviceSynchronize();
+	combineForMRC<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
 	cudaMemcpy(Y, Yf, rows*(cols-1)*sizeof(*Y), cudaMemcpyDeviceToHost);
 	cudaDeviceSynchronize();
 	/*
@@ -430,6 +383,7 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 		start = clock();
 	}
 	*/
+	/*
 	for(int r=1; r<rows; r++){
 		for(int j=0; j<cols-1; j++){
 			Y[j]= cuCaddf(Y[j],Y[r*(cols-1)+j]);
@@ -441,6 +395,7 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 		Y[j].x = Y[j].x/Hsqrd[j];
 		Y[j].y = Y[j].y/Hsqrd[j];
 	}
+	*/
 	
 	shiftOneRow(Y, cols-1, 0);
 	
@@ -466,7 +421,7 @@ int main(){
 	dY = (cuFloatComplex*)malloc(rows*cols* sizeof (*dY));
 	
 	float *Hsqrd = 0;
-	Hsqrd = (float*)malloc((cols-1)*sizeof (*Hsqrd));
+	cudaMalloc((void**)&Hsqrd, (cols-1)* sizeof (*Hsqrd));
 	
 	//dH (and Hconj) = 16x1023
 	cuFloatComplex *dH = 0;

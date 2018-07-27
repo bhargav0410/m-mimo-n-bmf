@@ -1,14 +1,14 @@
 clc;
 clear all;
 
-while 1
-system('scp root@node21-1:uhd/host/build/examples/Output_cpu.dat .');
-system('scp root@node21-1:uhd/host/build/examples/Output_gpu.dat .');
-system('scp root@node21-1:uhd/host/build/examples/time_cpu.dat .');
-system('scp root@node21-1:uhd/host/build/examples/time_gpu.dat .');
-rx1 = read_float_binary('Output_cpu.dat');
+% while 1
+% system('scp root@node21-1:uhd/host/build/examples/Output_cpu.dat .');
+% system('scp root@node21-1:uhd/host/build/examples/Output_gpu.dat .');
+% system('scp root@node21-1:uhd/host/build/examples/time_cpu.dat .');
+% system('scp root@node21-1:uhd/host/build/examples/time_gpu.dat .');
+rx1 = read_float_binary('C:\Users\Bhargav04\Documents\Massive MIMO programs\m-mimo-n-bmf\Output_cpu.dat');
 rxComp = rx1(1:2:end) + 1i*rx1(2:2:end);
-rx2 = read_float_binary('Output_gpu.dat');
+rx2 = read_float_binary('C:\Users\Bhargav04\Documents\Massive MIMO programs\m-mimo-n-bmf\Output_gpu.dat');
 rxComp = rx2(1:2:end) + 1i*rx2(2:2:end);
 
 figure(1);
@@ -19,8 +19,8 @@ axis([-2 2 -2 2]);
 title('Constellation','fontsize',12);
 legend('CPU','GPU');
 
-cputime = read_float_binary('time_cpu.dat');
-gputime = read_float_binary('time_gpu.dat');
+cputime = read_float_binary('C:\Users\Bhargav04\Documents\Massive MIMO programs\m-mimo-n-bmf\time_cpu.dat');
+gputime = read_float_binary('C:\Users\Bhargav04\Documents\Massive MIMO programs\m-mimo-n-bmf\time_gpu.dat');
 
 subplot(1,2,2);
 stem(cputime*1e3, 'r--*'); hold on;
@@ -30,6 +30,6 @@ xlabel('Index for various processes: 1 - Reading from shared memory, 2 - Channel
 ylabel('Time (ms)','fontsize',12);
 legend('Time (ms) for CPU','Time (ms) for GPU');
 hold off;
-pause(0.1);
-end
+% pause(0.1);
+% end
 

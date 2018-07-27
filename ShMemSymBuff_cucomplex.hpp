@@ -95,7 +95,7 @@ void printInfo(){
 
 //real=avg and imag = var
 complexF findAvgAndVar(float* times, int amt){
-	float avgTime = 0;
+	float avgTime;
 	
 	for(int i =0; i< amt; i++){
 		//print out
@@ -320,7 +320,7 @@ class ShMemSymBuff{
 			} else {
 				int size= rows*(cols)* sizeof (*dY);
 				// read data from shared mem into Y
-				memcpy(&dY[it*rows*cols],&buff->symbols[buff->readPtr].data[0], size);
+				cudaMemcpy(dY,&buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 			}
 				
 			/*
@@ -367,7 +367,7 @@ class ShMemSymBuff{
 				}
 				//drop the prefix
 				for(int i=0; i<rows; i++){
-					memcpy(&dY[(it)*(rows*cols) + i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
+					cudaMemcpy(&dY[i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY), cudaMemcpyHostToDevice);
 				}
 				if(timerEn){
 					finish = clock();
@@ -400,6 +400,10 @@ class ShMemSymBuff{
 			//can't read until writer writes
 			while(buff->writePtr == buff->readPtr );
 			
+			if(timerEn){
+				start = clock();
+			}
+			
 			cuFloatComplex* temp = 0;
 			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
 			int size = rows*(cols+prefix)* sizeof (*temp);
@@ -408,7 +412,7 @@ class ShMemSymBuff{
 			} else {
 				int size= rows*(cols)* sizeof (*dY);
 				// read data from shared mem into Y
-				memcpy(&dY[(lenOfBuffer-1)*rows*cols],&buff->symbols[buff->readPtr].data[0], size);
+				cudaMemcpy(dY,&buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 			}
 			/*
 			complexF* Y = 0;
@@ -424,17 +428,21 @@ class ShMemSymBuff{
 		//	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
 		//	memcpy(&Yf[0],&buff->symbols[buff->readPtr].data[0], size);
 		
+			if(timerEn){
+				finish = clock();
+				readT[numberOfSymbolsToTest] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+			}
 			if (prefix > 0) {
 				if(timerEn){
 					start = clock();
 				}
 				//drop the prefix
 				for(int i=0; i<rows; i++){
-					memcpy(&dY[(lenOfBuffer-1)*(rows*cols) + i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
+					cudaMemcpy(&dY[i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY), cudaMemcpyHostToDevice);
 				}
 				if(timerEn){
 					finish = clock();
-					drop[lenOfBuffer-1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+					drop[numberOfSymbolsToTest] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 				}
 			}
 			
