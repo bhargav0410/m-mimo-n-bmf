@@ -46,6 +46,9 @@ std::ofstream outfile;
 #define timerEn timerEnabled
 #define testEn testEnabled
 
+//Number of times the program is to be run
+float numTimes = 100;
+
 //Timing
 float readT[numberOfSymbolsToTest];
 //First one is time to solve for H
@@ -95,7 +98,7 @@ void printInfo(){
 
 //real=avg and imag = var
 complexF findAvgAndVar(float* times, int amt){
-	float avgTime;
+	float avgTime = 0;
 	
 	for(int i =0; i< amt; i++){
 		//print out
@@ -113,7 +116,7 @@ complexF findAvgAndVar(float* times, int amt){
 	
 	complexF c;
 	c.real = avgTime;
-	c.imag= variance;
+	c.imag = variance;
 	return c;
 			
 }
@@ -123,14 +126,14 @@ void printTimes(bool cpu){
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
 	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
 	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
-	printf("Read: \t \t %e \t %e \n", readtime.real, readtime.imag);
-	printf("ChanEst: \t %e \n", decode[0]);
-	printf("Decode: \t %e \t %e \n", decodetime.real, decodetime.imag);
-	printf("FFT: \t \t %e \t %e \n", FFTtime.real, FFTtime.imag);
+	printf("Read: \t \t %e \t %e \n", readtime.real/numTimes, readtime.imag/numTimes);
+	printf("ChanEst: \t %e \n", decode[0]/numTimes);
+	printf("Decode: \t %e \t %e \n", decodetime.real/numTimes, decodetime.imag/numTimes);
+	printf("FFT: \t \t %e \t %e \n", FFTtime.real/numTimes, FFTtime.imag/numTimes);
 	
 	if(cpu){
 		complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
-		printf("Drop: \t \t %e \t %e \n", dropTime.real, dropTime.imag);
+		printf("Drop: \t \t %e \t %e \n", dropTime.real/numTimes, dropTime.imag/numTimes);
 		
 	}
 }
@@ -140,6 +143,11 @@ void storeTimes(bool cpu) {
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
 	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
 	complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
+	readtime.real = readtime.real/numTimes;
+	decodetime.real = decodetime.real/numTimes;
+	FFTtime.real = FFTtime.real/numTimes;
+	dropTime.real = dropTime.real/numTimes;
+	decode[0] = decode[0]/numTimes;
 	std::string file;
 	if (cpu == false){
 		file = "time_gpu.dat";
@@ -230,7 +238,7 @@ class ShMemSymBuff{
 			}
 			if(timerEn){
 				finish = clock();
-				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot
@@ -257,7 +265,7 @@ class ShMemSymBuff{
 				}
 				if(timerEn){
 					finish = clock();
-					drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+					drop[it] = drop[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 				}
 			}
 			
@@ -312,67 +320,13 @@ class ShMemSymBuff{
 			if(timerEn){
 				start = clock();
 			}
-			cuFloatComplex* temp = 0;
-			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
-			int size = rows*(cols+prefix)* sizeof (*temp);
-			if (prefix > 0) {
-				memcpy(temp, &buff->symbols[buff->readPtr].data[0], size);
-			} else {
-				int size= rows*(cols)* sizeof (*dY);
-				// read data from shared mem into Y
-				cudaMemcpy(dY,&buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
-			}
+			int size = rows*(cols+prefix)* sizeof (*dY);
+			cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 				
-			/*
-			complexF* Y = 0;
-			Y = (complexF*)malloc(size);
-			memcpy(Y,&buff->symbols[buff->readPtr].data[0], size);
-			*/
-			// read data from shared mem into Y
-			/*
-			if (it == 1) {
-				std::string file = "Sym_copy_sh_mem.dat";
-				std::complex<float> Yf[rows*cols];
-			//	cuFloatComplex* Yf = 0;
-			//	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
-				memcpy(&Yf[0],&buff->symbols[buff->readPtr].data[0], size);
-				outfile.open(file.c_str(), std::ofstream::binary);
-				outfile.write((const char*)Yf, rows*(cols)*sizeof(*Yf));
-				outfile.close();
 			
-				cudaMemcpy(dY, &buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
-				std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-				cudaDeviceSynchronize();
-				std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
-				std::cout << "Copied from shared memory...\n";
-				
-			}
-			*/
-			
-			//memcpy(dY, &buff->symbols[buff->readPtr].data[0], size);
-
-			/*
-			for (int i = 0; i < cols; i++) {
-				printf("( %f, %f),",dY[i].real,dY[i].imag);
-			}
-			*/
 			if(timerEn){
 				finish = clock();
-				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-			}
-			
-			if (prefix > 0) {
-				if(timerEn){
-					start = clock();
-				}
-				//drop the prefix
-				for(int i=0; i<rows; i++){
-					cudaMemcpy(&dY[i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY), cudaMemcpyHostToDevice);
-				}
-				if(timerEn){
-					finish = clock();
-					drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-				}
+				readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot
@@ -403,47 +357,13 @@ class ShMemSymBuff{
 			if(timerEn){
 				start = clock();
 			}
-			
-			cuFloatComplex* temp = 0;
-			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
-			int size = rows*(cols+prefix)* sizeof (*temp);
-			if (prefix > 0) {
-				memcpy(temp, &buff->symbols[buff->readPtr].data[0], size);
-			} else {
-				int size= rows*(cols)* sizeof (*dY);
-				// read data from shared mem into Y
-				cudaMemcpy(dY,&buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
-			}
-			/*
-			complexF* Y = 0;
-			Y = (complexF*)malloc(size);
-			memcpy(Y,&buff->symbols[buff->readPtr].data[0], size);
-			
+			int size= rows*(cols+prefix)* sizeof (*dY);
 			// read data from shared mem into Y
-			cudaMemcpy(dY, Y, size, cudaMemcpyHostToDevice);
-			*/
-			// read data from shared mem into Y
-		//	std::complex<float> Yf[rows*cols];
-		//	cuFloatComplex* Yf = 0;
-		//	Yf = (cuFloatComplex*)malloc(rows*cols*sizeof(*Yf));
-		//	memcpy(&Yf[0],&buff->symbols[buff->readPtr].data[0], size);
-		
+			cudaMemcpy(dY,&buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
+			
 			if(timerEn){
 				finish = clock();
-				readT[numberOfSymbolsToTest] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-			}
-			if (prefix > 0) {
-				if(timerEn){
-					start = clock();
-				}
-				//drop the prefix
-				for(int i=0; i<rows; i++){
-					cudaMemcpy(&dY[i*cols], &temp[i*(cols+prefix)+ prefix], cols*sizeof(*dY), cudaMemcpyHostToDevice);
-				}
-				if(timerEn){
-					finish = clock();
-					drop[numberOfSymbolsToTest] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-				}
+				readT[numberOfSymbolsToTest-1] = readT[numberOfSymbolsToTest-1] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot

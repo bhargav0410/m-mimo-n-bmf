@@ -81,10 +81,21 @@ void matrix_readX(cuFloatComplex* X, int cols){
 	inFile.close();
 }
 
-void shiftOneRow(cuFloatComplex* Y, int cols, int row){
-	cuFloatComplex* Yf = &Y[row*cols];
-	//std::cout << "Here...\n";
-	cuFloatComplex* temp = 0;
+__global__ void shiftOneRow(cuFloatComplex* Y, int cols, int rows){
+	int col = threadIdx.x;
+	int tid = blockIdx.x*blockDim.x + threadIdx.x;
+	extern __shared__ cuFloatComplex temp[];
+	
+	if (threadIdx.x < (cols+1)/2) {
+		temp[col] = Y[tid+((cols-1)/2)];
+	} else {
+		temp[col] = Y[tid-((cols+1)/2)];
+	}
+	__syncthreads();
+	
+	Y[tid] = temp[col];
+	__syncthreads();
+	/*
 	temp=(cuFloatComplex*)malloc ((cols+1)/2* sizeof (*temp));
 	//copy second half to temp
 	memmove(temp, &Yf[(cols-1)/2], (cols+1)/2* sizeof (*Yf));
@@ -94,18 +105,25 @@ void shiftOneRow(cuFloatComplex* Y, int cols, int row){
 	memmove(Yf, temp, (cols+1)/2* sizeof (*Yf));
 	
 	free(temp);
-	
+	*/
 }
 
-void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1){
+__global__ void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1){
 	
 	int rows = rows1;
-	int cols= cols1;	
+	int cols= cols1;
+	int tid = blockIdx.x*blockDim.x + threadIdx.x;
+	Y[tid] = dY[blockIdx.x*(blockDim.x+prefix) + threadIdx.x + prefix];
+	/*
 	for(int i =0; i<rows; i++){
 		memcpy(&Y[i*cols], &dY[i*(cols+prefix)+ prefix], cols*sizeof(*dY));
-	}		
+	}	
+	*/
+	
+	
 }
 
+/*
 __device__ cuFloatComplex tempDev[numOfBlocks*(threadsPerBlock-1)];
 __global__ void reshapeSym(cuFloatComplex* Y, cuFloatComplex* Yf){
 	int row = blockIdx.x;
@@ -115,6 +133,7 @@ __global__ void reshapeSym(cuFloatComplex* Y, cuFloatComplex* Yf){
 	Y[row*blockDim.x + col] = tempDev[row*blockDim.x + col];
 	__syncthreads();	
 }
+*/
 
 __global__ void findHs(cuFloatComplex* dY,cuFloatComplex* dH,cuFloatComplex* dX,int rows1,int cols1){	
 	int cols=cols1;
@@ -193,7 +212,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 	
 	
 	//Read in Y with prefix
-	buffPtr->readNextSymbol(dY, 0);
+	buffPtr->readNextSymbolCUDA(dY, 0);
 	decode[0]=0;
 	//drop the prefix and move into first part of dY
 	cuFloatComplex* Y = 0;
@@ -201,6 +220,8 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 	cufftHandle plan;
     cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
 	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
+	cudaDeviceSynchronize();
+	/*
 	if(timerEn){
 		start = clock();
 	}
@@ -210,7 +231,20 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 		finish = clock();
 		readT[0] = readT[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-
+	*/
+	
+	if(timerEn){
+		start = clock();
+	}
+	
+	dropPrefix<< <numOfBlocks, threadsPerBlock>> >(Y,dY,rows,cols);
+	cudaDeviceSynchronize();
+	
+	if(timerEn){
+		finish = clock();
+		drop[0] = drop[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
 	
 	if(timerEn){
 		start = clock();
@@ -236,7 +270,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 //	dim3 dimBlock(numOfBlocks, threadsPerBlock-1);
 	findHs<< <numOfBlocks, threadsPerBlock-1>> >(Y, dH, dX, rows, cols);
 	cudaDeviceSynchronize();
-	std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
+//	std::cout << cudaGetErrorString(cudaGetLastError()) << std::endl;
 //	reshapeSym<< <numOfBlocks,threadsPerBlock-1 >> >(H, dH);
 //	cudaDeviceSynchronize();
 	//Save |H|^2 into Hsqrd
@@ -248,6 +282,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
+	/*
 	std::string file = "Chan_est.dat";
 	cuFloatComplex* Yf;
 	Yf = (cuFloatComplex*)malloc(rows*(cols-1)*sizeof(*Yf));
@@ -267,7 +302,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 	outfile.open(file.c_str(), std::ofstream::binary);
 	outfile.write((const char*)Yf, rows*(cols-1)*sizeof(*Hsqrd));
 	outfile.close();
-	
+	*/
 	free(X);
 	cudaFree(H);
 	
@@ -327,7 +362,6 @@ __global__ void combineForMRC(cuFloatComplex *Y, float *Hsqrd, int rows, int col
 		Y[blockIdx.x].y = Y[blockIdx.x].y/Hsqrd[blockIdx.x];
 	}
 	*/
-	
 }
 
 
@@ -339,19 +373,21 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 	//Y x conj(H) -> then sum all rows into elements in Hsqrd
 	//Y = 16x1024+prefix
 	//conjH = 16x1023
+	cuFloatComplex* dY = 0;
+	cudaMalloc((void**)&dY, rows*cols*sizeof(*dY));
+
 	if(timerEn){
 		start = clock();
 	}
 	
-	cuFloatComplex* dY = 0;
-	cudaMalloc((void**)&dY, rows*cols*sizeof(*dY));
-	cudaMemcpy(dY, Y, rows*cols*sizeof(*dY), cudaMemcpyHostToDevice);
+	dropPrefix<< <numOfBlocks, threadsPerBlock>> >(dY,Y,rows,cols);
 	cudaDeviceSynchronize();
 	
 	if(timerEn){
 		finish = clock();
-		readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		drop[it] = drop[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
+	
 	
 	if(timerEn){
 		start = clock();
@@ -376,34 +412,17 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 	doOneSymbol<< <numOfBlocks, threadsPerBlock-1>> >(dY, Hconj, Yf, rows, cols);
 	cudaDeviceSynchronize();
 	combineForMRC<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
-	cudaMemcpy(Y, Yf, rows*(cols-1)*sizeof(*Y), cudaMemcpyDeviceToHost);
 	cudaDeviceSynchronize();
-	/*
-	if(timerEn){
-		start = clock();
-	}
-	*/
-	/*
-	for(int r=1; r<rows; r++){
-		for(int j=0; j<cols-1; j++){
-			Y[j]= cuCaddf(Y[j],Y[r*(cols-1)+j]);
-		}
-	}
-	
-	//Divide YH* / |H|^2
-	for(int j=0; j<cols-1; j++){
-		Y[j].x = Y[j].x/Hsqrd[j];
-		Y[j].y = Y[j].y/Hsqrd[j];
-	}
-	*/
-	
-	shiftOneRow(Y, cols-1, 0);
+	shiftOneRow<< <1, threadsPerBlock-1, (threadsPerBlock-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, 0);
+	cudaDeviceSynchronize();
+	cudaMemcpy(Y, Yf, (cols-1)*sizeof(*Y), cudaMemcpyDeviceToHost);
+	cudaDeviceSynchronize();
 	
 	if(timerEn){
 		finish = clock();
-		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		decode[it] = decode[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-	cudaFree(dY);
+	//cudaFree(dY);
 	cudaFree(Yf);
 	cudaDeviceSynchronize();
 }
@@ -418,7 +437,7 @@ int main(){
 	//printInfo();
 	//dY holds symbol with prefix
 	cuFloatComplex *dY = 0;
-	dY = (cuFloatComplex*)malloc(rows*cols* sizeof (*dY));
+	cudaMalloc((void**)&dY, rows* (cols+prefix) * sizeof (*dY));
 	
 	float *Hsqrd = 0;
 	cudaMalloc((void**)&Hsqrd, (cols-1)* sizeof (*Hsqrd));
@@ -448,17 +467,17 @@ int main(){
 	cudaFree(temp);
 	*/
 	//Find H* (H conjugate) ->16x1023 and |H|^2 -> 1x1023
+	for (int iter = 0; iter < numTimes; iter++) {
 	firstVector(dY, dH, dX, Hsqrd, rows, cols);
 	//dH holds h conj
 	//dX holds |H|^2
-	
 	for(int i=1; i<numberOfSymbolsToTest; i++){
 		if(i==numberOfSymbolsToTest-1){
 			//if last one
-			buffPtr->readLastSymbol(dY);
+			buffPtr->readLastSymbolCUDA(dY);
 		}
 		else{
-			buffPtr->readNextSymbol(dY,i);
+			buffPtr->readNextSymbolCUDA(dY,i);
 			/*
 			if (i == 1) {
 				std::string file = "Sym_copy.dat";
@@ -485,7 +504,7 @@ int main(){
 		if(testEn){
 			//printf("Symbol #%d:\n", i);
 			//cuda copy it over
-			memcpy(Yf, dY, (cols-1)* sizeof (*Yf));
+			cudaMemcpy(Yf, dY, (cols-1)* sizeof (*Yf), cudaMemcpyDeviceToHost);
 			if (i <= 1) {
 				outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
 			} else {
@@ -498,7 +517,7 @@ int main(){
 		
 		
 	}
-	
+	}
 	free(Yf);
 	cudaFree(dY);
 	cudaFree(dH);

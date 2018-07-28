@@ -198,7 +198,7 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 	}
 	if(timerEn){
 		finish = clock();
-		fft[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		fft[it] = fft[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
 	if(timerEn){
@@ -221,7 +221,7 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 	shiftOneRow(Yf, cols-1, 0);
 	if(timerEn){
 		finish = clock();
-		decode[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		decode[it] = decode[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
 	if (it <= 1) {
@@ -274,7 +274,7 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	}
 	if(timerEn){
 		finish = clock();
-		fft[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		fft[0] = fft[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
 	if(timerEn){
@@ -305,7 +305,7 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	
 	if(timerEn){
 		finish = clock();
-		decode[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 }
 
@@ -332,7 +332,7 @@ int main(){
 	std::signal(SIGINT, &sig_int_handler);
 	
 	//Find H* (H conjugate) ->16x1023 and |H|^2 -> 1x1023
-	//while (not stop_signal_called) {
+	for (int iter = 0; iter < numTimes; iter++) {
 		firstVector(Y, Hconj, X, rows, cols);
 	
 		for(int i=1; i<numberOfSymbolsToTest; i++){
@@ -345,14 +345,14 @@ int main(){
 			doOneSymbol(Y, Hconj, X, rows, cols, i);
 			buffIter = i;
 		}
-	//}
+	}
 	
 	free(Y);
 	free(Hconj);
 	free(X);
 	//delete buffPtr;
 	if(timerEn) {
-//		printTimes(true);
+		printTimes(true);
 		storeTimes(true);
 }
 	

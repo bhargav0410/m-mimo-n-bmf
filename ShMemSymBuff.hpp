@@ -45,6 +45,9 @@ std::ofstream outfile;
 #define timerEn timerEnabled
 #define testEn testEnabled
 
+//Number of times the program is to be run
+int numTimes = 100;
+
 //Timing
 float readT[numberOfSymbolsToTest];
 //First one is time to solve for H
@@ -122,14 +125,14 @@ void printTimes(bool cpu){
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
 	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
 	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
-	printf("Read: \t \t %e \t %e \n", readtime.real, readtime.imag);
-	printf("ChanEst: \t %e \n", decode[0]);
-	printf("Decode: \t %e \t %e \n", decodetime.real, decodetime.imag);
-	printf("FFT: \t \t %e \t %e \n", FFTtime.real, FFTtime.imag);
+	printf("Read: \t \t %e \t %e \n", readtime.real/numTimes, readtime.imag/numTimes);
+	printf("ChanEst: \t %e \n", decode[0]/numTimes);
+	printf("Decode: \t %e \t %e \n", decodetime.real/numTimes, decodetime.imag/numTimes);
+	printf("FFT: \t \t %e \t %e \n", FFTtime.real/numTimes, FFTtime.imag/numTimes);
 	
 	if(cpu){
 		complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
-		printf("Drop: \t \t %e \t %e \n", dropTime.real, dropTime.imag);
+		printf("Drop: \t \t %e \t %e \n", dropTime.real/numTimes, dropTime.imag/numTimes);
 		
 	}
 }
@@ -139,6 +142,11 @@ void storeTimes(bool cpu) {
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
 	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
 	complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
+	readtime.real = readtime.real/numTimes;
+	decodetime.real = decodetime.real/numTimes;
+	FFTtime.real = FFTtime.real/numTimes;
+	dropTime.real = dropTime.real/numTimes;
+	decode[0] = decode[0]/numTimes;
 	std::string file;
 	if (cpu == false){
 		file = "time_gpu.dat";
@@ -228,7 +236,7 @@ class ShMemSymBuff{
 			}
 			if(timerEn){
 				finish = clock();
-				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot
@@ -255,7 +263,7 @@ class ShMemSymBuff{
 				}
 				if(timerEn){
 					finish = clock();
-					drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+					drop[it] = drop[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 				}
 			}
 			
@@ -339,7 +347,7 @@ class ShMemSymBuff{
 			
 			if(timerEn){
 				finish = clock();
-				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			//once you are done reading to that spot
 			int p = buff->readPtr+1;
