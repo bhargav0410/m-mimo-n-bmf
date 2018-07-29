@@ -108,6 +108,22 @@ __global__ void shiftOneRow(cuFloatComplex* Y, int cols, int rows){
 	*/
 }
 
+void shiftOneRowCPU(cuFloatComplex* Y, int cols, int row){
+	cuFloatComplex* Yf = &Y[row*cols];
+	//std::cout << "Here...\n";
+	cuFloatComplex* temp = 0;
+	temp=(cuFloatComplex*)malloc ((cols+1)/2* sizeof (*temp));
+	//copy second half to temp
+	memmove(temp, &Yf[(cols-1)/2], (cols+1)/2* sizeof (*Yf));
+	//copy first half to second half
+	memmove(&Yf[(cols+1)/2], Yf, (cols-1)/2* sizeof (*Yf));
+	//copy temp to first half
+	memmove(Yf, temp, (cols+1)/2* sizeof (*Yf));
+	
+	free(temp);
+	
+}
+
 __global__ void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1){
 	
 	int rows = rows1;
@@ -212,7 +228,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 	
 	
 	//Read in Y with prefix
-	buffPtr->readNextSymbolCUDA(dY, 0);
+	buffPtr->readNextSymbol(dY, 0);
 	decode[0]=0;
 	//drop the prefix and move into first part of dY
 	cuFloatComplex* Y = 0;
@@ -221,7 +237,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
     cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
 	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
 	cudaDeviceSynchronize();
-	/*
+	
 	if(timerEn){
 		start = clock();
 	}
@@ -231,8 +247,8 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 		finish = clock();
 		readT[0] = readT[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-	*/
 	
+	/*
 	if(timerEn){
 		start = clock();
 	}
@@ -244,7 +260,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, flo
 		finish = clock();
 		drop[0] = drop[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
-	
+	*/
 	
 	if(timerEn){
 		start = clock();
@@ -376,6 +392,7 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 	cuFloatComplex* dY = 0;
 	cudaMalloc((void**)&dY, rows*cols*sizeof(*dY));
 
+	/*
 	if(timerEn){
 		start = clock();
 	}
@@ -387,7 +404,17 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 		finish = clock();
 		drop[it] = drop[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
+	*/
 	
+	if(timerEn){
+		start = clock();
+	}
+	cudaMemcpy(dY, Y, rows*cols*sizeof(*Y), cudaMemcpyHostToDevice);
+	cudaDeviceSynchronize();
+	if(timerEn){
+		finish = clock();
+		readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
 	
 	if(timerEn){
 		start = clock();
@@ -413,10 +440,12 @@ void symbolPreProcess(cuFloatComplex *Y, cuFloatComplex *Hconj, float *Hsqrd,int
 	cudaDeviceSynchronize();
 	combineForMRC<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
 	cudaDeviceSynchronize();
-	shiftOneRow<< <1, threadsPerBlock-1, (threadsPerBlock-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, 0);
-	cudaDeviceSynchronize();
+//	shiftOneRow<< <1, threadsPerBlock-1, (threadsPerBlock-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, 0);
+//	cudaDeviceSynchronize();
 	cudaMemcpy(Y, Yf, (cols-1)*sizeof(*Y), cudaMemcpyDeviceToHost);
 	cudaDeviceSynchronize();
+	
+	shiftOneRowCPU(Y,cols-1,0);
 	
 	if(timerEn){
 		finish = clock();
@@ -437,7 +466,7 @@ int main(){
 	//printInfo();
 	//dY holds symbol with prefix
 	cuFloatComplex *dY = 0;
-	cudaMalloc((void**)&dY, rows* (cols+prefix) * sizeof (*dY));
+	dY = (cuFloatComplex*)malloc(rows*(cols)* sizeof (*dY));
 	
 	float *Hsqrd = 0;
 	cudaMalloc((void**)&Hsqrd, (cols-1)* sizeof (*Hsqrd));
@@ -474,10 +503,10 @@ int main(){
 	for(int i=1; i<numberOfSymbolsToTest; i++){
 		if(i==numberOfSymbolsToTest-1){
 			//if last one
-			buffPtr->readLastSymbolCUDA(dY);
+			buffPtr->readLastSymbol(dY);
 		}
 		else{
-			buffPtr->readNextSymbolCUDA(dY,i);
+			buffPtr->readNextSymbol(dY,i);
 			/*
 			if (i == 1) {
 				std::string file = "Sym_copy.dat";
@@ -504,7 +533,7 @@ int main(){
 		if(testEn){
 			//printf("Symbol #%d:\n", i);
 			//cuda copy it over
-			cudaMemcpy(Yf, dY, (cols-1)* sizeof (*Yf), cudaMemcpyDeviceToHost);
+			memcpy(Yf, dY, (cols-1)* sizeof (*Yf));
 			if (i <= 1) {
 				outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
 			} else {
