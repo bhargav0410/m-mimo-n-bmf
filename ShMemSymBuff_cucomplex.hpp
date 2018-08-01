@@ -47,7 +47,7 @@ std::ofstream outfile;
 #define testEn testEnabled
 
 //Number of times the program is to be run
-float numTimes = 100;
+float numTimes = 1;
 
 //Timing
 float readT[numberOfSymbolsToTest];
@@ -124,7 +124,7 @@ complexF findAvgAndVar(float* times, int amt){
 void printTimes(bool cpu){
 	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
-	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
+	complexF FFTtime = findAvgAndVar(&fft[1], numberOfSymbolsToTest-1);
 	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
 	printf("Read: \t \t %e \t %e \n", readtime.real/numTimes, readtime.imag/numTimes);
 	printf("ChanEst: \t %e \n", decode[0]/numTimes);
@@ -141,7 +141,7 @@ void printTimes(bool cpu){
 void storeTimes(bool cpu) {
 	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
 	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
-	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest);
+	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest-1);
 	complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
 	readtime.real = readtime.real/numTimes;
 	decodetime.real = decodetime.real/numTimes;

@@ -1,3 +1,6 @@
+#ifndef _CPULS_HPP_
+#define _CPULS_HPP_
+
 //FFTW library 
 #include <fftw3.h>
 //Shared Memory 
@@ -24,20 +27,10 @@
 //Y = 16 x 1024
 //X = 1 x 1023
 //H = 16 x 1023
+using namespace std;
 ShMemSymBuff* buffPtr;
 
-using namespace std;
-
-std::string file = "Output_cpu.dat";
-//std::ofstream outfile;
-/*
-if (not file.empty()) {
-	outfile.open(file.c_str(), std::ofstream::binary);
-}
-*/
-
-static bool stop_signal_called = false;
-void sig_int_handler(int){stop_signal_called = true;}
+string file = "Output_cpu.dat";
 
 //Reads in Vector X from file -> 1xcols
 void matrix_readX(complexF* X, int cols){
@@ -96,7 +89,7 @@ void shiftOneRow(complexF* Y, int cols, int row){
 	
 }
 
-//FFT on one vector of Y in row row
+//FFT on one vector of Y in row
 void fftOneRow(complexF* Y, int cols, int row){
 	
 	fftwf_complex* org = (fftwf_complex*)&Y[row*cols];
@@ -308,54 +301,4 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 }
-
-int main(){
-	int rows = numOfRows; // number of vectors -> 16
-	int cols = dimension;//dimension -> 1024
-	string shm_uid = shmemID;
-	
-	//printf("CPU LS: \n");
-	//printInfo();
-	
-	//Y = 16x1024
-	complexF* Y = 0;
-	Y = (complexF*)malloc(rows*cols*sizeof(*Y));
-	//H (and Hconj) = 16x1023
-	complexF* Hconj = 0;
-	Hconj = (complexF *)malloc(rows*(cols-1)* sizeof (*Hconj));
-	//X = 1x1023 -> later can become |H|^2
-	complexF* X = 0;
-	X = (complexF *)malloc((cols-1)* sizeof(*X));
-	
-	// Create shared memory space, return pointer and set as master.
-	buffPtr=new ShMemSymBuff(shm_uid, mode);
-	std::signal(SIGINT, &sig_int_handler);
-	
-	//Find H* (H conjugate) ->16x1023 and |H|^2 -> 1x1023
-	for (int iter = 0; iter < numTimes; iter++) {
-		firstVector(Y, Hconj, X, rows, cols);
-	
-		for(int i=1; i<numberOfSymbolsToTest; i++){
-		/*
-		if(testEn){
-			printf("Symbol #%d:\n", i);
-		}
-		*/
-		
-			doOneSymbol(Y, Hconj, X, rows, cols, i);
-			buffIter = i;
-		}
-	}
-	
-	free(Y);
-	free(Hconj);
-	free(X);
-	//delete buffPtr;
-	if(timerEn) {
-		printTimes(true);
-		storeTimes(true);
-}
-	
-	return 0;
-
-}
+#endif

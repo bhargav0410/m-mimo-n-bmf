@@ -30,7 +30,7 @@
 		= 0 -> slave -> doesn't create the shared memory
 */
  
-//!How to Compile:   nvcc ../../examples/gpuLS_cucomplex.cu -lcufft -lrt -o gpu 
+//!How to Compile:   nvcc ../../examples/gpuLS_cucomplex.cu -lcufft -lrt -o gpu -arch=sm_35
 // ./gpu
 
 //LS

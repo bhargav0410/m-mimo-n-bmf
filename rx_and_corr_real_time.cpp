@@ -17,12 +17,13 @@
 #include <cmath>
 #include <csignal>
 #include <ctime>
+#include <thread>
 #include <sys/socket.h>
 #include <string>
 #include "ShMemSymBuff.hpp"
 
 #define FFT_size dimension
-#define cp_size 16
+#define cp_size prefix
 #define numSymbols lenOfBuffer
 #define mode 1
 ShMemSymBuff* buffPtr;
@@ -39,20 +40,10 @@ void copy_to_shared_mem(int chan) {
 	//std::cout << "Here\n";
 	std::complex<float>* copy_to_mem = 0;
 	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size+prefix)*sizeof(*copy_to_mem)));
-//	std::cout << "Num symbols: " << numSymbols << std::endl;
-//	std::cout << "Prefix: " << cp_size << std::endl;
-//	std::cout << "FFT size: " << FFT_size << std::endl;
 	for (int i = 0; i < numSymbols; i++) {
 //		std::cout << "Symbol: " << i+1 << std::endl;
 		for (int j = 0; j < chan; j++) {
 			memcpy(&copy_to_mem[j*(FFT_size+prefix)], &copy_buff[j][i*(FFT_size+prefix)], (FFT_size+prefix)*sizeof(*copy_to_mem));
-			//memcpy(&copy_to_mem[j*(FFT_size+cp_size)], &copy_buff[j][i*(FFT_size+cp_size)], (FFT_size+cp_size)*sizeof(*copy_to_mem));
-			/*
-			for (int k = 0; k < FFT_size+cp_size; k++) {
-				copy_to_mem[j*(FFT_size+cp_size) + k].real = copy_buff[j][i*(FFT_size+cp_size) + k].real();
-				copy_to_mem[j*(FFT_size+cp_size) + k].imag = copy_buff[j][i*(FFT_size+cp_size) + k].imag();
-			}
-			*/
 		}
 		buffPtr->writeNextSymbolNoWait(copy_to_mem);
 	}
@@ -276,58 +267,49 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 	size_t num_rx_samps;
 	while (not stop_signal_called){
 		//corr_flag = false;
-		num_rx_samps = rx_stream->recv(buff_ptrs1, samps_per_buff, md, timeout);
-		stream_cmd.stream_now = true;
-		timeout = 0.5;
-		num_rx_samps = rx_stream->recv(buff_ptrs2, samps_per_buff, md, timeout);
-		//std::cout << num_rx_samps << std::endl;
-		
-		/*
-		if (first_time == false) {
+		if (first_time == true) {
+			num_rx_samps = rx_stream->recv(buff_ptrs1, samps_per_buff, md, timeout);
+			stream_cmd.stream_now = true;
+			timeout = 0.5;
+			num_rx_samps = rx_stream->recv(buff_ptrs2, samps_per_buff, md, timeout);
+		} else if (first_time == false and corr_flag == true) {
 			for (int ch = 0; ch < channel_nums.size(); ch++) {
-				int j = 0;
-				for (int i = length + pn_buff.size(); i < samps_per_buff; i++) {
-					copy_buff[ch][j] = buff[ch][i];
-					j++;
+				//int j = 0;
+				memcpy(&copy_buff[ch][0],&buff1[ch][length + pn_buff.size()],(samps_per_buff- length - pn_buff.size())*sizeof(std::complex<float>));
+				/*
+				for (int i = length + pn_buff.size(),j = 0; i < samps_per_buff; i++,j++) {
+					copy_buff[ch][j] = buff1[ch][i];
 				}
+				*/
 			}
-			copy_to_shared_mem(copy_buff, channel_nums.size());
-			break;
-		}
-		*/
 		
+		
+
 		
 		
 		std::vector<std::complex<float> > temp(num_rx_samps);
 		std::complex<float> abs;
 		float temp_iter;
 		if (corr_flag == false) {
-			for (int ch_temp = 0; ch_temp < channel_nums.size(); ch_temp++) {
-				for (int i = 0; i < (samps_per_buff - pn_buff.size() + 1); i++) {
-					temp[i] = 0;
-					for (int j = 0; j < pn_buff.size(); j++) {
-						/*
-						float tempr = pn_buff[j].real()*buff[0][i+j].real() - pn_buff[j].imag()*buff[0][i+j].imag();
-						float tempi = pn_buff[j].real()*buff[0][i+j].imag() + pn_buff[j].imag()*buff[0][i+j].real();
-						abs.real(tempr);
-						abs.imag(tempi);
-						temp[i] += std::sqrt(abs.real()*abs.real() + abs.imag()*abs.imag());
-						*/
-						temp[i] += pn_buff[j]*buff1[ch_temp][i+j];
-						//temp_iter = i;
-					}
-					temp_iter = std::abs(temp[i])/((float)pn_buff.size());
-					if (temp_iter >= thres) {
-						std::cout << "\n" << temp_iter << "\n";
-						std::cout << "\n" << i << "\n";
-						length = i;
-						corr_flag = true;
-						break;
-					}
+			for (int i = 0; i < (samps_per_buff - pn_buff.size() + 1); i++) {
+				temp[i] = 0;
+				for (int j = 0; j < pn_buff.size(); j++) {
+					temp[i] += pn_buff[j]*buff1[0][i+j];
 				}
+				temp_iter = std::abs(temp[i])/((float)pn_buff.size());
 				if (temp_iter >= thres) {
+					std::cout << "\n" << temp_iter << "\n";
+					std::cout << "\n" << i << "\n";
+					length = i;
+					/*
+					outfilename = file + "_test_binary";
+					outfile.open(outfilename.c_str(), std::ofstream::binary);
+					outfile.write((const char*)&buff[0][i], 255*sizeof(std::complex<float>));
+					outfile.close();
+					*/
+					corr_flag = true;
 					break;
-				}
+				}	
 			}
 		}
 		
@@ -343,20 +325,26 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 		
 		if (corr_flag == true) { // and first_time == true) {
 			for (int ch = 0; ch < channel_nums.size(); ch++) {
+				memcpy(&copy_buff[ch][0],&buff1[ch][length + pn_buff.size()],(samps_per_buff - length - pn_buff.size())*sizeof(std::complex<float>));
+				/*
 				int j = 0;
 				for (int i = length + pn_buff.size(); i < samps_per_buff; i++) {
 					copy_buff[ch][j] = buff1[ch][i];
 					j++;
 				}
+				*/
 			}
 		}
 
 
 		if (length > 0 and corr_flag == true) {// and first_time == true) {
 			for (int ch = 0; ch < channel_nums.size(); ch++) {
+				memcpy(&copy_buff[ch][samps_per_buff - length - pn_buff.size()],&buff2[ch][0],length*sizeof(std::complex<float>));
+				/*
 				for (int i = 0; i < length; i++) {
 					copy_buff[ch][i + (samps_per_buff - length - pn_buff.size())] = buff2[ch][i];
 				}
+				*/
 			}
 			//length = 0;
 			//break;
