@@ -5,9 +5,13 @@
 #include <fftw3.h>
 //Shared Memory 
 #include "CSharedMemSimple.hpp"
-#include "ShMemSymBuff.hpp"
+#include "ShMemSymBuff_cucomplex.hpp"
 #include <csignal>
+#include <cstdlib>
 #include <fstream>
+#include <math.h>
+#include <algorithm>
+#include <cblas.h>
 #define mode 0
 #define fileNameForX "Pilots.dat"
 
@@ -27,10 +31,24 @@
 //Y = 16 x 1024
 //X = 1 x 1023
 //H = 16 x 1023
+
 using namespace std;
 ShMemSymBuff* buffPtr;
 
 string file = "Output_cpu.dat";
+string in_file = "Input_cpu.dat";
+
+int num_syms;
+
+//LAPACK and BLAS functions
+
+extern "C" {
+	void cgetrf_(int* m, int* n, complexF* A, int* lda, int* ipiv, int* info);
+	void cgetri_(int* n, complexF* A, int* lda, int* ipiv, complexF* work, int* lwork, int* info);
+	void csytrf_(char* uplo, int* n, complexF* A, int* lda, int* ipiv, complexF* work, int* lwork, int* info);
+	void csytri_(char* uplo, int* n, complexF* A, int* lda, int* ipiv, complexF* work, int* info);
+}
+
 
 //Reads in Vector X from file -> 1xcols
 void matrix_readX(complexF* X, int cols){
@@ -38,7 +56,7 @@ void matrix_readX(complexF* X, int cols){
 	inFile.open(fileNameForX, std::ifstream::binary);
 	if (!inFile) {
 		cerr << "Unable to open file data file, filling in 1+i for x\n";
-		float c=1.0f;
+		float c=0.707f;
 		for (int col = 0; col <  cols; col++){
 			X[col].real=c;
 			X[col].imag=c;
@@ -72,6 +90,21 @@ void matrix_readX(complexF* X, int cols){
 	inFile.close();
 }
 
+void ifftShiftOneRow(complexF* Y, int cols, int row){
+	complexF* Yf = &Y[row*cols];
+	
+	complexF* temp = 0;
+	temp=(complexF*)malloc ((cols)/2* sizeof (*temp));
+	//copy second half to temp
+	memmove(temp, &Yf[(cols)/2], (cols)/2* sizeof (*Yf));
+	//copy first half to second half
+	memmove(&Yf[(cols)/2], Yf, (cols)/2* sizeof (*Yf));
+	//copy temp to first half
+	memmove(Yf, temp, (cols)/2* sizeof (*Yf));
+	
+	free(temp);
+}
+
 //Shifts first and second half of vector fft(Y)
 void shiftOneRow(complexF* Y, int cols, int row){
 	complexF* Yf = &Y[row*cols];
@@ -89,6 +122,19 @@ void shiftOneRow(complexF* Y, int cols, int row){
 	
 }
 
+//IFFT on one vector of Y in row
+void ifftOneRow(complexF* Y, int cols, int row){
+	
+	fftwf_complex* org = (fftwf_complex*)&Y[row*cols];
+	fftwf_complex* after = (fftwf_complex*)&Y[row*cols];
+
+	fftwf_plan fft_p = fftwf_plan_dft_1d(cols, org, after, FFTW_BACKWARD, FFTW_MEASURE /*FFTW_ESTIMATE*/);
+	fftwf_execute(fft_p);
+	fftwf_destroy_plan(fft_p);
+	
+	
+}
+
 //FFT on one vector of Y in row
 void fftOneRow(complexF* Y, int cols, int row){
 	
@@ -98,8 +144,17 @@ void fftOneRow(complexF* Y, int cols, int row){
 	fftwf_plan fft_p = fftwf_plan_dft_1d(cols, org, after, FFTW_FORWARD, FFTW_MEASURE /*FFTW_ESTIMATE*/);
 	fftwf_execute(fft_p);
 	fftwf_destroy_plan(fft_p);
-	
-	
+//	fftw_free(org);fftw_free(after);
+}
+
+void numSyms(std::string in_file1, int cols) {
+	std::ifstream infile;
+	infile.open(in_file1.c_str(), std::ifstream::binary);
+	infile.seekg(0, infile.end);
+	size_t num_tx_samps = infile.tellg()/sizeof(complexF);
+	infile.seekg(0, infile.beg);
+	num_syms = std::ceil((float)num_tx_samps/(float)(cols-1));
+	infile.close();
 }
 
 //Element by element multiplication
@@ -160,6 +215,74 @@ void divideOneRow(complexF * A, complexF * B, int cols, int row){
 		A[i*cols+j].imag=((fxb*fya - fxa*fyb)/(fya*fya + fyb*fyb));	
 	}
 	
+}
+
+//Finds |H|^2 and H*=Hconj, rows=16 cols=1024
+void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
+	//Read in X vector -> 1x1023
+	matrix_readX(X, cols-1);
+	//printOutArr(X, 1, cols-1);
+	for (int i = 0; i<rows; i++){  
+		for (int j = 0; j<cols; j++){
+			Y[i*cols + j].real=0;
+			Y[i*cols + j].imag=0;
+			if(j<cols-1){
+				Hconj[i*(cols-1)+j].real=0;
+				Hconj[i*(cols-1)+j].imag=0;
+			}
+		}
+	}
+	
+	//Do pre FFT bc library doesn't work first time
+	fftOneRow(Y, cols, 0);
+	
+	//Read in Y (get rid of prefix)
+	buffPtr->readNextSymbol(Y, 0);
+	
+	clock_t start, finish;
+	if(timerEn){
+		start = clock();
+	}
+	
+	for(int row=0; row<rows; row++){
+		//FFT one row 
+		fftOneRow(Y, cols, row);
+	}
+	if(timerEn){
+		finish = clock();
+		fft[0] = fft[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	if(timerEn){
+		start = clock();
+	}
+	for(int row=0; row<rows; row++){
+		//Drop first element and copy it into Hconj
+		memcpy(&Hconj[row*(cols-1)], &Y[row*cols+1], (cols-1)* sizeof (*Y));
+		
+		//shift the row
+		//shiftOneRow(Hconj, cols-1, row);
+		
+		//Divide FFT(Y) by X
+		divideOneRow(Hconj, X, cols-1, row);
+	}
+	
+	//take conjugate of H
+	
+	for (int i = 0; i<rows; i++){  
+		for (int j = 0; j<cols-1; j++){
+			Hconj[i*(cols-1) + j].imag = -1*Hconj[i*(cols-1) + j].imag;
+		}
+	}
+	
+	//Now Hconj holds H
+	//Save |H|^2 into X
+	findDistSqrd(Hconj,X,rows, cols-1);
+	
+	if(timerEn){
+		finish = clock();
+		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
 }
 
 void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int cols, int it){
@@ -234,71 +357,113 @@ void doOneSymbol(complexF* Y, complexF* Hconj, complexF* Hsqrd,int rows, int col
 	free(Yf);
 }
 
-//Finds |H|^2 and H*=Hconj, rows=16 cols=1024
-void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
-	//Read in X vector -> 1x1023
-	matrix_readX(X, cols-1);
-	//printOutArr(X, 1, cols-1);
-	for (int i = 0; i<rows; i++){  
-		for (int j = 0; j<cols; j++){
-			Y[i*cols + j].real=0;
-			Y[i*cols + j].imag=0;
-			if(j<cols-1){
-				Hconj[i*(cols-1)+j].real=0;
-				Hconj[i*(cols-1)+j].imag=0;
+void addPrefix(complexF* Y, complexF* dY, int rows, int cols) {
+	
+	for (int row = 0; row < rows; row++) {
+		memcpy(&Y[row*(cols + prefix)], &dY[row*cols + (cols - prefix)], prefix*sizeof(*dY));
+		memcpy(&Y[row*(cols + prefix) + prefix], &dY[row*cols], cols*sizeof(dY));
+	}
+	
+}
+
+void rotCube(complexF* X, int rows, int cols, int users) {
+	complexF* temp;
+	temp = (complexF *)calloc(rows*users*cols,sizeof(*temp));
+	
+	for (int col = 0; col < cols; col++) {
+		for (int row = 0; row < rows; row++) {
+			for (int user = 0; user < users; user++) {
+				temp[col*users*rows + row*users + user] = X[user*rows*cols + row*cols + col];
 			}
 		}
 	}
-	
-	//Do pre FFT bc library doesn't work first time
-	fftOneRow(Y, cols, 0);
-	
-	//Read in Y (get rid of prefix)
-	buffPtr->readNextSymbol(Y, 0);
-	
-	clock_t start, finish;
-	if(timerEn){
-		start = clock();
-	}
-	
-	for(int row=0; row<rows; row++){
-		//FFT one row 
-		fftOneRow(Y, cols, row);
-	}
-	if(timerEn){
-		finish = clock();
-		fft[0] = fft[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-	}
-	
-	if(timerEn){
-		start = clock();
-	}
-	for(int row=0; row<rows; row++){
-		//Drop first element and copy it into Hconj
-		memcpy(&Hconj[row*(cols-1)], &Y[row*cols+1], (cols-1)* sizeof (*Y));
-		
-		//shift the row
-		//shiftOneRow(Hconj, cols-1, row);
-		
-		//Divide FFT(Y) by X
-		divideOneRow(Hconj, X, cols-1, row);
-	}
-	
-	//take conjugate of H
-	
-	for (int i = 0; i<rows; i++){  
-		for (int j = 0; j<cols-1; j++){
-			Hconj[i*(cols-1) + j].imag = -1*Hconj[i*(cols-1) + j].imag;
-		}
-	}
-	
-	//Now Hconj holds H
-	//Save |H|^2 into X
-	findDistSqrd(Hconj,X,rows, cols-1);
-	
-	if(timerEn){
-		finish = clock();
-		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-	}
+	memcpy(X, temp, rows*cols*users*sizeof(*X));
+	free(temp);
 }
+
+void createZeroForcingMatrix(complexF* H, complexF* X, int rows, int cols, int users) {
+	float alpha = 1, beta = 0;
+	int info, lwork = users*users;
+	char uplo = 'U';
+	complexF* tempH;
+	complexF* work;
+	int* ipiv;
+	tempH = (complexF *)malloc(users*users*sizeof(*tempH));
+	ipiv = (int *)malloc(users*sizeof(*ipiv));
+	work = (complexF *)malloc(lwork*sizeof(*work));
+	
+//	std::cout << "X before rot: " << X[0].real << ", " << X[1].real << ", " << X[2].real << ", " << X[3].real << std::endl;
+	rotCube(X, rows, std::max(1,cols-1), users);
+	
+//	std::cout << "X after rot: " << X[0].real << ", " << X[1].real << ", " << X[2].real << ", " << X[3].real << ", " << X[4].real << ", " << X[5].real << std::endl;
+	
+	for (int i = 0; i < 6; i++) {
+		std::cout << "( " << X[i].real << ", " << X[i].imag << ")";
+	}
+	std::cout << "\n";
+	
+	for (int col = 0; col < std::max(1,cols-1); col++) {
+		cblas_cgemm(CblasColMajor, CblasNoTrans, CblasConjTrans, users, users, rows, &alpha, (float *)&X[col*rows*users], users, (float *)&X[col*rows*users], users, &beta, (float *)tempH, users);
+		cgetrf_(&users, &users, tempH, &users, ipiv, &info);
+		cgetri_(&users, tempH, &users, ipiv, work, &lwork, &info);
+		cblas_cgemm(CblasColMajor, CblasConjTrans, CblasNoTrans, rows, users, users, &alpha, (float *)&X[col*rows*users], users, (float *)tempH, users, &beta, (float *)&H[col*rows*users], rows);
+	}
+	
+	
+	free(tempH);
+	free(ipiv);
+	free(work);
+}
+
+void multiplyWithChannelInv(complexF* HX, complexF* X, complexF* H, int rows, int cols, int users) {
+	float alpha = 1, beta = 0;
+	complexF* vec = 0;
+	vec = (complexF *)malloc(users*sizeof(*vec));
+	
+	for (int i = 0; i < cols-1; i++) {
+		/*
+		for(int user = 0; user < users; user++) {
+			vec[user] = X[user*(cols-1) + i];
+		}
+		*/
+		cblas_cgemv(CblasColMajor, CblasNoTrans, rows, users, &alpha, (float *)&H[rows*users*i], rows, (float *)&X[i], cols-1, &beta, (float *)&HX[i], cols-1);
+	}
+	free(vec);
+}
+
+void modRefSymbol(complexF* Y, complexF* X, int rows, int cols) {
+	
+	matrix_readX(X, cols-1);
+	
+	complexF* dY;
+	dY = (complexF *)calloc(rows*cols,sizeof(*dY));
+	
+	for (int row = 0; row < rows; row++) {
+		//dY[row*cols] = 0;
+		memcpy(&dY[row*(cols) + 1], X, (cols-1)*sizeof(*X));
+		
+		ifftShiftOneRow(dY, cols, row);
+		ifftOneRow(dY, cols, row);
+	}
+	
+	addPrefix(Y, dY, rows, cols);
+	free(dY);
+}
+
+void modOneSymbol(complexF* Y, complexF* H, complexF* X, int rows, int cols, int users) {
+	multiplyWithChannelInv(Y, H, X, rows, cols, users);
+	complexF* dY;
+	dY = (complexF *)calloc(rows*cols,sizeof(*dY));
+	
+	for (int row = 0; row < rows; row++) {
+		//dY[row*cols] = 0;
+		memcpy(&dY[row*(cols) + 1], &Y[row*(cols-1)], (cols-1)*sizeof(*Y));
+		
+		ifftShiftOneRow((complexF *)dY, cols, row);
+		ifftOneRow((complexF *)dY, cols, row);
+	}
+	
+	addPrefix(Y, dY, rows, cols);
+}
+
 #endif

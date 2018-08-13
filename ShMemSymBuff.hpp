@@ -22,7 +22,7 @@
 #endif
 //64
 #ifndef prefix
-  #define prefix 72
+  #define prefix 0
 #endif
 
 #ifndef timerEnabled
@@ -37,7 +37,7 @@ std::ofstream outfile;
 
 //100
 #ifndef lenOfBuffer
-	#define lenOfBuffer 101
+	#define lenOfBuffer 10
 #endif
 #define numberOfSymbolsToTest lenOfBuffer
 #define shmemID "/blah"
@@ -46,7 +46,7 @@ std::ofstream outfile;
 #define testEn testEnabled
 
 //Number of times the program is to be run
-int numTimes = 100;
+int numTimes = 1;
 
 //Timing
 float readT[numberOfSymbolsToTest];

@@ -15,6 +15,7 @@
 #include <cuda_profiler_api.h>
 #include <stdio.h>
 #include <assert.h>
+#include <math.h>
 
 #define FFT_size dimension
 #define cp_size prefix
@@ -43,10 +44,12 @@
 //H = 16 x 1023
 ShMemSymBuff* buffPtr;
 using namespace std;
+int device_number = 0;
+cudaDeviceProp devProp;
 	
 	
 //Reads in Vector X from file -> 1xcols
-void matrix_readX(cuFloatComplex* X, int cols){
+inline void matrix_readX(cuFloatComplex* X, int cols){
 	ifstream inFile;
 	inFile.open(fileNameForX);
 	if (!inFile) {
@@ -98,17 +101,20 @@ void copyPilotToGPU(cuFloatComplex* dX, int rows, int cols) {
 	//std::cout << "Here...\n";
 	cudaMemcpy(dX, X, rows*(cols-1)*sizeof(*dX), cudaMemcpyHostToDevice);
 	cudaDeviceSynchronize();
+	free(X);
 }
 
 
-__global__ void shiftOneRow(cuFloatComplex* Y, int cols, int rows){
-	int col = threadIdx.x;
-	int tid = blockIdx.x*blockDim.x + threadIdx.x;
+__global__ void shiftOneRow(cuFloatComplex* Y, int cols1, int rows1){
+	int cols = cols1;
+	//int rows = rows1;
+	int col = threadIdx.y*cols + threadIdx.x;
+	int tid = blockIdx.y*gridDim.x*blockDim.y*cols + blockIdx.x*blockDim.y*cols + threadIdx.y*cols + threadIdx.x;
 	extern __shared__ cuFloatComplex temp[];
 	
-	if (threadIdx.x < (cols+1)/2) {
+	if ((threadIdx.x + blockIdx.x*cols) < (cols+1)/2) {
 		temp[col] = Y[tid+((cols-1)/2)];
-	} else if (threadIdx.x >= (cols+1)/2) {
+	} else if ((threadIdx.x + blockIdx.x*cols) >= (cols+1)/2 and threadIdx.x < cols) {
 		temp[col] = Y[tid-((cols+1)/2)];
 	}
 	__syncthreads();
@@ -119,7 +125,7 @@ __global__ void shiftOneRow(cuFloatComplex* Y, int cols, int rows){
 
 
 
-void shiftOneRowCPU(cuFloatComplex* Y, int cols, int row){
+inline void shiftOneRowCPU(cuFloatComplex* Y, int cols, int row){
 	cuFloatComplex* Yf = &Y[row*cols];
 	//std::cout << "Here...\n";
 	cuFloatComplex* temp = 0;
@@ -151,20 +157,24 @@ __global__ void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int
 }
 
 __global__ void findHs(cuFloatComplex* dY,cuFloatComplex* dH,cuFloatComplex* dX, int rows1, int cols1){	
-	//int cols=cols1-1;
+	int cols = cols1-1;
+	int rows = rows1;
+	int tid = (blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*cols + threadIdx.x;
+	int tid2 = (blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*(cols+1) + threadIdx.x + 1;
 	//find my work
 	//Drop first element and copy it into Hconj
-	dH[blockIdx.x*blockDim.x + threadIdx.x] = dY[blockIdx.x*(blockDim.x + 1) + threadIdx.x + 1];
+	if ((blockIdx.y + threadIdx.y)*blockDim.x + threadIdx.x < cols) {
+		dH[tid] = dY[tid2];
+	}
 	__syncthreads();
-	int tid = blockIdx.x*blockDim.x + threadIdx.x;
 	
 	//complex division
 	//H/X where H = FFT(Y) (w/ dropped first element)
 	//Then take conjugate of H
-	if (threadIdx.x < blockDim.x) {
-		dH[blockIdx.x*blockDim.x + threadIdx.x] = cuCdivf(dH[blockIdx.x*blockDim.x + threadIdx.x], dX[blockIdx.x*blockDim.x + threadIdx.x]);
-		dH[blockIdx.x*blockDim.x + threadIdx.x] = cuConjf(dH[blockIdx.x*blockDim.x + threadIdx.x]);
-		dX[blockIdx.x*blockDim.x + threadIdx.x].x = dH[blockIdx.x*blockDim.x + threadIdx.x].x * dH[blockIdx.x*blockDim.x + threadIdx.x].x + dH[blockIdx.x*blockDim.x + threadIdx.x].y * dH[blockIdx.x*blockDim.x + threadIdx.x].y;
+	if (tid < cols*rows) {
+		dH[tid] = cuCdivf(dH[tid], dX[tid]);
+		dH[tid] = cuConjf(dH[tid]);
+		//dX[tid].x = dH[tid].x * dH[tid].x + dH[tid].y * dH[tid].y;
 	}
 	__syncthreads();
 	//Now dH holds conj H
@@ -173,27 +183,91 @@ __global__ void findHs(cuFloatComplex* dY,cuFloatComplex* dH,cuFloatComplex* dX,
 }
 
 
-__global__ void findDistSqrd(cuFloatComplex* H, float* Hsqrd, int rows, int cols){
-	int tid = blockIdx.x*blockDim.x + threadIdx.x;
+__global__ void findDistSqrd(cuFloatComplex* H, float* Hsqrd, int rows1, int cols1){
+	int cols = cols1;
+	int rows = rows1;
+	//int tid = blockIdx.x*cols + threadIdx.x;
 	extern __shared__ cuFloatComplex temp[];
-	int sid = threadIdx.x*cols + blockIdx.x;
-	temp[threadIdx.x] = H[sid];
-	
+	int sid = threadIdx.x*cols + blockIdx.x*blockDim.y + threadIdx.y;
+	int tempID = threadIdx.y*rows + threadIdx.x;
+	if (sid < rows*cols) {
+		temp[tempID] = H[sid];
+	}
+	temp[tempID].x = temp[tempID].x*temp[tempID].x + temp[tempID].y*temp[tempID].y;
+	__syncthreads();
 	for (int i = 1; i < rows; i = i*2) {
-		if (threadIdx.x%(2*i) == 0) {
-			temp[threadIdx.x].x += temp[threadIdx.x+i].x;
+		if (threadIdx.x%(2*i) == 0 and (blockIdx.x*blockDim.y + threadIdx.y) < cols) {
+			temp[tempID].x += temp[tempID+i].x;
 		}
 		__syncthreads();
 	}
 	
 	
-	if(threadIdx.x == 0) {
-		Hsqrd[blockIdx.x] = temp[threadIdx.x].x;
+	if(threadIdx.x == 0 and (blockIdx.x*blockDim.y + threadIdx.y) < cols) {
+		Hsqrd[blockIdx.x*blockDim.y + threadIdx.y] = temp[tempID].x;
 	}
 }
 
 
-void firstVector(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dH, cuFloatComplex* dX, float* Hsqrd, int rows, int cols, int it){
+__global__ void multiplyWithChannelConj(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Yf, int rows1, int cols1,int syms1 = 1){
+	int rows = rows1;
+	int cols = cols1-1;
+    int syms = syms1;
+    //find my work 
+	//Y x conj(H) -> then sum all rows into elements in Hsqrd
+	//Y = 16x1024+prefix
+	//conjH = 16x1023
+	int row = blockIdx.x;
+	int sym = blockIdx.z;
+	int j = threadIdx.x;
+	int tid = (blockIdx.z*gridDim.y*gridDim.x*blockDim.y + blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*cols + threadIdx.x;
+	int tid2 = (blockIdx.z*gridDim.y*gridDim.x*blockDim.y + blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*(cols+1) + threadIdx.x;
+	
+	if ((blockIdx.y + threadIdx.y)*cols + threadIdx.x < cols) {
+		Yf[tid] = Y[tid2];
+	}
+	__syncthreads();
+	
+	if (tid < rows*cols*syms) {
+		Yf[tid] = cuCmulf(Yf[tid],Hconj[row*blockDim.x + j]);
+	}
+	__syncthreads();
+}
+
+
+__global__ void combineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int cols1) {
+	int rows = rows1;
+	int cols = cols1;
+	int row = blockIdx.x*blockDim.y + threadIdx.y;
+	int col = threadIdx.x;
+	//int tid = blockIdx.x*blockDim.x + threadIdx.x;
+	extern __shared__ cuFloatComplex temp[];
+	int tempID = threadIdx.y*rows + threadIdx.x;
+	int sid = blockIdx.y*rows*cols + threadIdx.x*cols + blockIdx.x*blockDim.y + threadIdx.y;
+	temp[tempID] = Y[sid];
+	
+	for (int i = 1; i < rows; i = i*2) {
+		if (threadIdx.x%(2*i) == 0 and (blockIdx.x*blockDim.y + threadIdx.y) < cols) {
+			temp[tempID] = cuCaddf(temp[tempID],temp[tempID+i]);
+		}
+		__syncthreads();
+	}
+	
+	if (threadIdx.x == 0 and (blockIdx.x*blockDim.y + threadIdx.y) < cols) {
+		Y[row + cols*blockIdx.y].x = temp[tempID].x/Hsqrd[row];
+		Y[row + cols*blockIdx.y].y = temp[tempID].y/Hsqrd[row];
+		__syncthreads();
+	}
+}
+
+
+
+
+
+
+/*-----------------------------------Host Functions--------------------------------------*/
+
+inline void firstVector(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dH, cuFloatComplex* dX, float* Hsqrd, int rows, int cols, int it){
 	clock_t start, finish;
 	//std::cout << "Here...\n";	
 	
@@ -201,7 +275,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dH, cuFl
 	
 	
 	//Read in Y with prefix
-	buffPtr->readNextSymbol(dY, it);
+	buffPtr->readNextSymbolCUDA(dY, it);
 	
 	if(timerEn){
 		start = clock();
@@ -236,7 +310,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dH, cuFl
 	findHs<< <numOfBlocks, threadsPerBlock-1>> >(Y, dH, dX, rows, cols);
 	cudaDeviceSynchronize();
 	//Save |H|^2 into Hsqrd
-	findDistSqrd<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(dX, Hsqrd, rows, cols-1);
+	findDistSqrd<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(dH, Hsqrd, rows, cols-1);
 	cudaDeviceSynchronize();
 	
 	if(timerEn){
@@ -251,54 +325,7 @@ void firstVector(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dH, cuFl
 	//dX holds {H^2)	
 }
 
-
-__global__ void multiplyWithChannelConj(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Yf, int rows1, int cols1){
-	int rows = rows1;
-	int cols= cols1;
-    
-    //find my work 
-	//Y x conj(H) -> then sum all rows into elements in Hsqrd
-	//Y = 16x1024+prefix
-	//conjH = 16x1023
-	int row = blockIdx.x;
-	int sym = blockIdx.y;
-	int j = threadIdx.x;
-	Yf[sym*blockDim.x*gridDim.x + row*blockDim.x + j] = Y[sym*(blockDim.x+1)*gridDim.x + row*(blockDim.x+1) + j + 1];
-	__syncthreads();
-	
-	if (j < cols-1) {
-		Yf[sym*blockDim.x*gridDim.x + row*blockDim.x + j] = cuCmulf(Yf[sym*blockDim.x*gridDim.x + row*blockDim.x + j],Hconj[row*blockDim.x + j]);
-	}
-	__syncthreads();
-}
-
-
-__global__ void combineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int cols1) {
-	int rows = rows1;
-	int cols = cols1;
-	int row = blockIdx.x;
-	int col = threadIdx.x;
-	//int tid = blockIdx.x*blockDim.x + threadIdx.x;
-	extern __shared__ cuFloatComplex temp[];
-	int sid = threadIdx.x*cols + blockIdx.x + rows*cols*blockIdx.y;
-	temp[col] = Y[sid];
-	
-	for (int i = 1; i < rows; i = i*2) {
-		if (threadIdx.x%(2*i) == 0) {
-			temp[col] = cuCaddf(temp[col],temp[col+i]);
-		}
-		__syncthreads();
-	}
-	
-	if (col == 0) {
-		Y[row + cols*blockIdx.y].x = temp[col].x/Hsqrd[row];
-		Y[row + cols*blockIdx.y].y = temp[col].y/Hsqrd[row];
-		__syncthreads();
-	}
-}
-
-
-void demodOneSymbol(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex *Hconj, float *Hsqrd,int rows1, int cols1, int it) {
+inline void demodOneSymbol(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex *Hconj, float *Hsqrd,int rows1, int cols1, int it) {
 	int rows = rows1;
 	int cols= cols1;
 
@@ -309,9 +336,9 @@ void demodOneSymbol(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex *Hconj
 	
 	if(it==numberOfSymbolsToTest-1){
 		//if last one
-		buffPtr->readLastSymbol(dY);
+		buffPtr->readLastSymbolCUDA(dY);
 	} else {
-		buffPtr->readNextSymbol(dY, it);
+		buffPtr->readNextSymbolCUDA(dY, it);
 	}
 	
 	if(timerEn){
@@ -361,10 +388,10 @@ void demodOneSymbol(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex *Hconj
 	cudaDeviceSynchronize();
 }
 
-void demodOneFrame(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex* dX, cuFloatComplex *Hconj, float *Hsqrd, int rows1, int cols1) {
+inline void demodOneFrame(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex* dX, cuFloatComplex *Hconj, float *Hsqrd, int rows1, int cols1) {
 	int rows = rows1;
 	int cols = cols1;
-
+	int maxThreads = devProp.maxThreadsPerBlock;
 	clock_t start, finish;
 	//Y x conj(H) -> then sum all rows into elements in Hsqrd
 	//Y = 16x1024+prefix
@@ -408,10 +435,17 @@ void demodOneFrame(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex* dX, cu
 		start = clock();
 	}
 //	dim3 dimBlock(numOfBlocks, threadsPerBlock-1);
-	findHs<< <numOfBlocks, threadsPerBlock-1>> >(Y, Hconj, dX, rows, cols);
-	cudaDeviceSynchronize();
-	//Save |H|^2 into Hsqrd
-	findDistSqrd<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(dX, Hsqrd, rows, cols-1);
+	if (threadsPerBlock <= maxThreads) {
+		findHs<< <numOfBlocks, threadsPerBlock-1>> >(Y, Hconj, dX, rows, cols);
+		cudaDeviceSynchronize();
+		//Save |H|^2 into Hsqrd
+	} else {
+		dim3 chanEstDim(numOfBlocks,ceil(threadsPerBlock/maxThreads));
+		findHs<< <chanEstDim, maxThreads>> >(Y, Hconj, dX, rows, cols);
+		cudaDeviceSynchronize();
+		//Save |H|^2 into Hsqrd
+	}
+	findDistSqrd<< <threadsPerBlock-1, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Hconj, Hsqrd, rows, cols-1);
 	cudaDeviceSynchronize();
 	
 	if(timerEn){
@@ -424,9 +458,15 @@ void demodOneFrame(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex* dX, cu
 	}
 	cuFloatComplex* Yf = 0;
 	cudaMalloc((void**)&Yf, rows*(cols-1)*(lenOfBuffer-1)* sizeof (*Yf));
-	dim3 gridDims1(numOfBlocks, lenOfBuffer-1);
-	multiplyWithChannelConj<< <gridDims1, threadsPerBlock-1>> >(&Y[rows*cols], Hconj, Yf, rows, cols);
-	cudaDeviceSynchronize();
+	if (threadsPerBlock <= maxThreads) {
+		dim3 gridDims1(numOfBlocks, 1, lenOfBuffer-1);
+		multiplyWithChannelConj<< <gridDims1, threadsPerBlock-1>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+		cudaDeviceSynchronize();
+	} else {
+		dim3 gridDims1(numOfBlocks, ceil(threadsPerBlock/maxThreads), lenOfBuffer-1);
+		multiplyWithChannelConj<< <gridDims1, maxThreads>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+		cudaDeviceSynchronize();
+	}
 	dim3 gridDims2(threadsPerBlock-1, lenOfBuffer-1);
 	combineForMRC<< <gridDims2, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
 	cudaDeviceSynchronize();
@@ -446,5 +486,200 @@ void demodOneFrame(cuFloatComplex *dY, cuFloatComplex* Y, cuFloatComplex* dX, cu
 	cudaFree(Yf);
 	cudaDeviceSynchronize();
 }
+
+inline void demodOneFrameCUDA(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dX, cuFloatComplex *Hconj, float *Hsqrd, int rows1, int cols1) {
+	int rows = rows1;
+	int cols = cols1;
+	int maxThreads = devProp.maxThreadsPerBlock;
+	
+	clock_t start, finish;
+	//Y x conj(H) -> then sum all rows into elements in Hsqrd
+	//Y = 16x1024+prefix
+	//conjH = 16x1024
+	/*
+	for (int it = 0; it < numberOfSymbolsToTest; it++) {
+		if(it==numberOfSymbolsToTest-1){
+			//if last one
+			buffPtr->readLastSymbolCUDA(&Y[rows*cols*it]);
+		} else {
+			buffPtr->readNextSymbolCUDA(&Y[rows*cols*it], it);
+		}
+	}
+//	cudaDeviceSynchronize();
+	*/
+	if(timerEn){
+		start = clock();
+	}
+	
+	//FFT(Y)
+	cufftHandle plan;
+	cufftPlan1d(&plan, cols, CUFFT_C2C, rows*(lenOfBuffer));
+	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
+//	cudaDeviceSynchronize();
+	if(timerEn){
+		finish = clock();
+		fft[1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	
+	if(timerEn){
+		start = clock();
+	}
+//	dim3 dimBlock(numOfBlocks, threadsPerBlock-1);
+
+	if (threadsPerBlock <= maxThreads) {
+		findHs<< <numOfBlocks, threadsPerBlock>> >(Y, Hconj, dX, rows, cols);
+	//	cudaDeviceSynchronize();
+		//Save |H|^2 into Hsqrd
+	} else {
+		dim3 chanEstBlockDim1(maxThreads);
+		dim3 chanEstGridDim1(numOfBlocks,ceil((float)threadsPerBlock/(float)maxThreads));
+		findHs<< <chanEstGridDim1, chanEstBlockDim1>> >(Y, Hconj, dX, rows, cols);
+	//	cudaDeviceSynchronize();
+		//Save |H|^2 into Hsqrd
+	}
+//	dim3 chanEstBlockDim2(rows,ceil((float)maxThreads/(float)rows));
+//	dim3 chanEstGridDim2(ceil((float)(cols)/(ceil((float)maxThreads/(float)rows))),ceil((float)rows/(float)maxThreads));
+	findDistSqrd<< <threadsPerBlock-1,numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Hconj, Hsqrd, rows, cols-1);
+//	cudaDeviceSynchronize();
+	
+	if(timerEn){
+		finish = clock();
+		decode[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	if(timerEn){
+		start = clock();
+	}
+	cuFloatComplex* Yf = 0;
+	cudaMalloc((void**)&Yf, rows*(cols-1)*(lenOfBuffer-1)* sizeof (*Yf));
+	if (threadsPerBlock <= maxThreads) {
+		dim3 gridDims1(numOfBlocks, 1, lenOfBuffer-1);
+		multiplyWithChannelConj<< <gridDims1, threadsPerBlock-1>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+	//	cudaDeviceSynchronize();
+	} else {
+		dim3 gridDims1(numOfBlocks, ceil((float)threadsPerBlock/(float)maxThreads), lenOfBuffer-1);
+		multiplyWithChannelConj<< <gridDims1, maxThreads>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+	//	cudaDeviceSynchronize();
+	}
+	dim3 gridDims2(threadsPerBlock-1, lenOfBuffer-1);
+	combineForMRC<< <gridDims2, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
+	cudaDeviceSynchronize();
+	if (threadsPerBlock <= maxThreads) {
+		shiftOneRow<< <(1,lenOfBuffer-1), threadsPerBlock-1, (threadsPerBlock-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+	//	cudaDeviceSynchronize();
+	} else {
+		dim3 gridDims3(ceil((float)threadsPerBlock/(float)maxThreads), lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, maxThreads, (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+	//	cudaDeviceSynchronize();
+	}
+	cudaMemcpy(dY, Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*dY), cudaMemcpyDeviceToHost);
+	//cudaDeviceSynchronize();
+	/*
+	for (int it = 1; it < lenOfBuffer-1; it++) {
+		shiftOneRowCPU(dY,cols-1,0);
+	}
+	*/
+	if(timerEn){
+		finish = clock();
+		decode[1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	cudaFree(Yf);
+}
+
+inline void demodOptimized(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dX, cuFloatComplex *Hconj, float *Hsqrd, int rows1, int cols1) {
+//	cublasHandle_t handle;
+//	cublasCreate(&handle);
+	
+	int rows = rows1;
+	int cols = cols1;
+	int maxThreads = devProp.maxThreadsPerBlock;
+	
+	clock_t start, finish;
+	//Y x conj(H) -> then sum all rows into elements in Hsqrd
+	//Y = 16x1024+prefix
+	//conjH = 16x1024
+//	cudaDeviceSynchronize();
+	
+	if(timerEn){
+		start = clock();
+	}
+	
+	//FFT(Y)
+	cufftHandle plan;
+	cufftPlan1d(&plan, cols, CUFFT_C2C, rows*(lenOfBuffer));
+	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
+//	cudaDeviceSynchronize();
+	if(timerEn){
+		finish = clock();
+		fft[1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	
+	if(timerEn){
+		start = clock();
+	}
+//	dim3 dimBlock(numOfBlocks, threadsPerBlock-1);
+	if (threadsPerBlock <= maxThreads) {
+		dim3 chanEstBlockDim(threadsPerBlock,ceil((float)maxThreads/(float)threadsPerBlock));
+		dim3 chanEstGridDim(ceil((float)numOfBlocks/ceil((float)maxThreads/(float)threadsPerBlock)),1);
+		findHs<< <numOfBlocks, threadsPerBlock>> >(Y, Hconj, dX, rows, cols);
+	//	cudaDeviceSynchronize();
+		//Save |H|^2 into Hsqrd
+	} else {
+		dim3 chanEstBlockDim1(maxThreads);
+		dim3 chanEstGridDim1(numOfBlocks,ceil((float)threadsPerBlock/(float)maxThreads));
+		findHs<< <chanEstGridDim1, chanEstBlockDim1>> >(Y, Hconj, dX, rows, cols);
+	//	cudaDeviceSynchronize();
+		//Save |H|^2 into Hsqrd
+	}
+	
+	dim3 distSqrdBlockDim(numOfBlocks,ceil((float)maxThreads/(float)numOfBlocks));
+	dim3 distSqrdGridDim(ceil((float)(threadsPerBlock-1)/ceil((float)maxThreads/(float)numOfBlocks)),1);
+	findDistSqrd<< <threadsPerBlock-1,numOfBlocks, maxThreads*sizeof(cuFloatComplex)>> >(Hconj, Hsqrd, rows, cols-1);
+	
+	if(timerEn){
+		finish = clock();
+		decode[0] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	
+	if(timerEn){
+		start = clock();
+	}
+	cuFloatComplex* Yf = 0;
+	cudaMalloc((void**)&Yf, rows*(cols-1)*(lenOfBuffer-1)* sizeof (*Yf));
+	if (threadsPerBlock <= maxThreads) {
+		dim3 blockDims1(threadsPerBlock,ceil((float)maxThreads/(float)threadsPerBlock));
+		dim3 gridDims1(ceil((float)numOfBlocks/ceil((float)maxThreads/(float)threadsPerBlock)), 1, lenOfBuffer-1);
+		multiplyWithChannelConj<< <gridDims1, blockDims1>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+	//	cudaDeviceSynchronize();
+	} else {
+		dim3 gridDims1(numOfBlocks, ceil((float)threadsPerBlock/(float)maxThreads), lenOfBuffer-1);
+		multiplyWithChannelConj<< <gridDims1, maxThreads>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+	//	cudaDeviceSynchronize();
+	}
+	
+	dim3 blockDim2(numOfBlocks,ceil((float)maxThreads/(float)numOfBlocks));
+	dim3 gridDims2(ceil((float)(threadsPerBlock-1)/ceil((float)maxThreads/(float)numOfBlocks)), lenOfBuffer-1);
+	combineForMRC<< <gridDims2, blockDims2, maxThreads*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
+	cudaDeviceSynchronize();
+	if (threadsPerBlock <= maxThreads) {
+		shiftOneRow<< <(1,lenOfBuffer-1), ((threadsPerBlock-1),ceil((float)maxThreads/(float)(threadsPerBlock-1))), (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+	//	cudaDeviceSynchronize();
+	} else {
+		dim3 gridDims3(ceil((float)(threadsPerBlock-1)/(float)maxThreads), lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, maxThreads, (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+	//	cudaDeviceSynchronize();
+	}
+	cudaMemcpy(dY, Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*dY), cudaMemcpyDeviceToHost);
+	
+	if(timerEn){
+		finish = clock();
+		decode[1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+	}
+	cudaFree(Yf);
+}
+
+
 
 #endif

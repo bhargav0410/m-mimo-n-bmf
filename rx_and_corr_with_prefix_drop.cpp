@@ -19,9 +19,10 @@
 #include <ctime>
 #include <sys/socket.h>
 #include <string>
-#include "ShMemSymBuff_cucomplex.hpp"
+#include "ShMemSymBuff.hpp"
 
 #define FFT_size dimension
+#define cp_size prefix
 #define numSymbols lenOfBuffer
 #define mode 1
 ShMemSymBuff* buffPtr;
@@ -31,21 +32,20 @@ static bool stop_signal_called = false;
 void sig_int_handler(int){stop_signal_called = true;}
 
 std::vector<std::vector<std::complex<float> > > copy_buff;
-int cp_size;
 
 namespace po = boost::program_options;
 
 void copy_to_shared_mem(int chan) {
 	//std::cout << "Here\n";
 	std::complex<float>* copy_to_mem = 0;
-	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size)*sizeof(*copy_to_mem)));
+	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size+prefix)*sizeof(*copy_to_mem)));
 //	std::cout << "Num symbols: " << numSymbols << std::endl;
 //	std::cout << "Prefix: " << cp_size << std::endl;
 //	std::cout << "FFT size: " << FFT_size << std::endl;
 	for (int i = 0; i < numSymbols; i++) {
 //		std::cout << "Symbol: " << i+1 << std::endl;
 		for (int j = 0; j < chan; j++) {
-			memcpy(&copy_to_mem[j*(FFT_size)], &copy_buff[j][i*(FFT_size+cp_size) + cp_size], (FFT_size)*sizeof(*copy_to_mem));
+			memcpy(&copy_to_mem[j*(FFT_size+prefix)], &copy_buff[j][i*(FFT_size+prefix)], (FFT_size+prefix)*sizeof(*copy_to_mem));
 			//memcpy(&copy_to_mem[j*(FFT_size+cp_size)], &copy_buff[j][i*(FFT_size+cp_size)], (FFT_size+cp_size)*sizeof(*copy_to_mem));
 			/*
 			for (int k = 0; k < FFT_size+cp_size; k++) {
@@ -74,7 +74,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
     desc.add_options()
         ("help", "help message")
         ("args", po::value<std::string>(&args)->default_value(""), "multi uhd device address args")
-		("file-prefix", po::value<std::string>(&file)->default_value("corr_rec"), "prefix of the file name to write binary samples to")
+		("prefix", po::value<std::string>(&file)->default_value("corr_rec"), "prefix of the file name to write binary samples to")
         // hardware parameters
         ("rate", po::value<double>(&rate), "rate of incoming samples (sps)")
         ("freq", po::value<double>(&freq), "RF center frequency in Hz")
@@ -90,7 +90,6 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
         ("int-n", "tune USRP with integer-N tuning")
 		("delay", po::value<float>(&delay)->default_value(0), "initial receive delay")
 		("thres", po::value<float>(&thres)->default_value(0.1), "correlator threshold (peaks below this threshold will not be considered)")
-		("cp-size", po::value<int>(&cp_size)->default_value(72), "size of cyclic prefix")
     ;
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);

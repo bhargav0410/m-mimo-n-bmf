@@ -1,7 +1,7 @@
 #include <fftw3.h>
 //Shared Memory 
 #include "CSharedMemSimple.hpp"
-#include "ShMemSymBuff.hpp"
+#include "ShMemSymBuff_cucomplex.hpp"
 #include <csignal>
 #include <fstream>
 #include <cstring>
@@ -12,7 +12,7 @@
 
 #define mode 1
 #define FFT_size dimension
-#define cp_size prefix
+#define cp_size 72
 #define numSymbols lenOfBuffer
 #define chan numOfRows
 ShMemSymBuff* buffPtr;
@@ -57,13 +57,13 @@ int main() {
 		infile.close();
 	}
 	
-	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size+cp_size)*sizeof(*copy_to_mem)));
+	copy_to_mem = (std::complex<float>*)malloc((chan*(FFT_size)*sizeof(*copy_to_mem)));
 	std::cout << "Copying to shared memory...\n";
-	//while(not stop_signal_called) {
+	while(not stop_signal_called) {
 		for (int i = 0; i < numSymbols; i++) {
 			//std::cout << "Symbol " << i << std::endl;
 			for (int j = 0; j < chan; j++) {
-				memcpy(&copy_to_mem[j*(FFT_size+cp_size)], &copy_buff[j][i*(FFT_size+cp_size)], (FFT_size+cp_size)*sizeof(*copy_to_mem));
+				memcpy(&copy_to_mem[j*(FFT_size)], &copy_buff[j][i*(FFT_size+cp_size)+cp_size], (FFT_size)*sizeof(*copy_to_mem));
 				/*
 				for (int k = 0; k < FFT_size+cp_size; k++) {
 					copy_to_mem[j*(FFT_size+cp_size) + k].real = copy_buff[j][i*(FFT_size+cp_size) + k].real();
@@ -71,11 +71,12 @@ int main() {
 				}
 				*/
 			}
-			buffPtr->writeNextSymbolWithWait(copy_to_mem);
+			buffPtr->writeNextSymbolNoWait(copy_to_mem);
+			
 		}
 	//	printOutArr(copy_to_mem,1,cp_size+FFT_size);
 		iter++;
-	//}
+	}
 	
 	
 	delete buffPtr;

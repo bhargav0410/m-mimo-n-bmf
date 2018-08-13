@@ -51,7 +51,7 @@ int main(){
 	cuFloatComplex *dY = 0;
 	dY = (cuFloatComplex*)malloc(rows*(cols)*lenOfBuffer* sizeof (*dY));
 	
-	float *Hsqrd = 0;
+	cuFloatComplex *Hsqrd = 0;
 	cudaMalloc((void**)&Hsqrd, (cols-1)* sizeof (*Hsqrd));
 	
 	//dH (and Hconj) = 16x1023
@@ -86,14 +86,6 @@ int main(){
 		
 	while (not stop_signal_called) {
 		start = clock();
-		for (int it = 0; it < numberOfSymbolsToTest; it++) {
-			if(it==numberOfSymbolsToTest-1){
-				//if last one
-				buffPtr->readLastSymbolCUDA(&Y[rows*cols*it]);
-			} else {
-				buffPtr->readNextSymbolCUDA(&Y[rows*cols*it], it);
-			}
-		}
 		demodOneFrameCUDA(dY, Y, dX, dH, Hsqrd, rows, cols);
 		if (timerEn) {
 			printTimes(true);

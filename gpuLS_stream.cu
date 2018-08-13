@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <csignal>
+#include <boost/thread.hpp>
 #define FFT_size dimension
 #define cp_size prefix
 #define numSymbols lenOfBuffer
@@ -83,29 +84,26 @@ int main(){
 	std::signal(SIGINT, &sig_int_handler);
 	
 	copyPilotToGPU(dX, rows, cols);
-		
+	
+	
+	std::vector<boost::thread> t[lenOfBuffer-1];
 	while (not stop_signal_called) {
 		start = clock();
-		for (int it = 0; it < numberOfSymbolsToTest; it++) {
-			if(it==numberOfSymbolsToTest-1){
-				//if last one
-				buffPtr->readLastSymbolCUDA(&Y[rows*cols*it]);
-			} else {
-				buffPtr->readNextSymbolCUDA(&Y[rows*cols*it], it);
-			}
+		firstVector(dY, Y, dH, dX, Hsqrd, rows, cols, 0);
+		for (int iter = 1; iter < numSymbols; iter++) {
+			demodOneSymbol(&dY[rows*cols*iter], &Y[rows*cols*iter], dX, dH, Hsqrd, rows, cols, it);
+			if(testEn){
+			//printf("Symbol #%d:\n", i);
+			//cuda copy it over
+			memcpy(Yf, &dY[rows*cols*iter], (cols-1)* sizeof (*Yf));
+			outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
+			outfile.write((const char*)Yf, (cols-1)*sizeof(*Yf));
+			outfile.close();
 		}
-		demodOneFrameCUDA(dY, Y, dX, dH, Hsqrd, rows, cols);
+		}
 		if (timerEn) {
 			printTimes(true);
 			storeTimes(false);
-		}
-		if(testEn){
-			//printf("Symbol #%d:\n", i);
-			//cuda copy it over
-			memcpy(Yf, dY, (cols-1)*(lenOfBuffer-1)* sizeof (*Yf));
-			outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
-			outfile.write((const char*)Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*Yf));
-			outfile.close();
 		}
 		while ((((float)(clock() - start))/(float)CLOCKS_PER_SEC) < 1);
 	}

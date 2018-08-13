@@ -6,16 +6,45 @@
 #include<fstream>
 #include <cstdlib>
 #include <cstring>
+#ifdef cudaEn
 #include <cuComplex.h>
+#endif
 #include <complex>
+//#include <boost/program_options.hpp>
+//#include <boost/thread.hpp>
 #include "CSharedMemSimple.hpp"
 
 //Timer
 #include<time.h>
 
+/*
+int numOfRows = 16, dimension = 1024, prefix = 72, lenOfBuffer = 101, numberOfSymbolsToTest = 101;
+
+void cmd_dir() {
+	namespace po = boost::program_options;
+	po::options_description desc("Allowed options");
+    desc.add_options()
+        ("help", "help message")
+        ("ants", po::value<int>(&numOfRows)->default_value(16), "number of antennas")
+		("subcarriers", po::value<int>(&dimension)->default_value(1024), "number of subcarriers pr symbol")
+		("prefix", po::value<int>(&prefix)->default_value(72), "cyclic prefix size")
+		("num-syms", po::value<int>(&lenOfBuffer)->default_value(101), "number of OFDM symbols")
+    ;
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);
+	
+	numberOfSymbolsToTest = lenOfBuffer;
+}
+*/
+
 //16 x 1024
 #ifndef numOfRows
 	#define numOfRows 16
+#endif
+
+#ifndef numUsers
+	#define numUsers 4
 #endif
 
 #ifndef dimension
@@ -38,13 +67,14 @@ std::ofstream outfile;
 
 //100
 #ifndef lenOfBuffer
-	#define lenOfBuffer 101
+	#define lenOfBuffer 10
 #endif
 #define numberOfSymbolsToTest lenOfBuffer
 #define shmemID "/blah"
 #define PL printf("Line #: %d \n", __LINE__);
 #define timerEn timerEnabled
 #define testEn testEnabled
+
 
 //Number of times the program is to be run
 float numTimes = 1;
@@ -127,9 +157,10 @@ void printTimes(bool cpu){
 	complexF FFTtime = findAvgAndVar(&fft[1], numberOfSymbolsToTest-1);
 	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
 	printf("Read: \t \t %e \t %e \n", readtime.real/numTimes, readtime.imag/numTimes);
-	printf("ChanEst: \t %e \n", decode[0]/numTimes);
+	printf("ChanEst: \t %e \n", (decode[0] + FFTtime.real + readtime.real)/numTimes);
 	printf("Decode: \t %e \t %e \n", decodetime.real/numTimes, decodetime.imag/numTimes);
 	printf("FFT: \t \t %e \t %e \n", FFTtime.real/numTimes, FFTtime.imag/numTimes);
+	printf("Frame: \t \t %e \n", (((FFTtime.real + readtime.real + decodetime.real)*(lenOfBuffer-1))/numTimes));
 	
 	if(cpu){
 		complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
@@ -161,6 +192,7 @@ void storeTimes(bool cpu) {
 	outfile.write((const char*)&decodetime.real, sizeof(float));
 	outfile.write((const char*)&FFTtime.real, sizeof(float));
 	outfile.write((const char*)&dropTime.real, sizeof(float));
+	outfile.close();
 }
 
 
@@ -210,15 +242,16 @@ class ShMemSymBuff{
 		}
 		
 		//Reads a whole symbol into Y -> use prefix definition to determine prefix
-		void readNextSymbol(cuFloatComplex* Y, int it){
+		template <typename T>
+		void readNextSymbol(T* Y, int it){
 			int rows = numOfRows;
 			int cols = dimension;
 			
 			//writePtr==-1 to start
 			while(buff->writePtr ==-1);
 			
-			cuFloatComplex* temp = 0;
-			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof(*temp));
+			T* temp = 0;
+			temp=(T*)malloc(rows*(cols+prefix)* sizeof(*temp));
 
 			//can't read until writer writes
 			while(buff->writePtr == buff->readPtr );
@@ -273,7 +306,8 @@ class ShMemSymBuff{
 		}
 		
 		//Reads a last symbol into Y doesn't worry about changing ptr index to same as writer since last one
-		void readLastSymbol(cuFloatComplex* Y){
+		template <typename T>
+		inline void readLastSymbol(T* Y){
 			int rows = numOfRows;
 			int cols = dimension;
 			
@@ -283,8 +317,8 @@ class ShMemSymBuff{
 			//can't read until writer writes
 			while(buff->writePtr == buff->readPtr );
 			
-			cuFloatComplex* temp = 0;
-			temp=(cuFloatComplex*)malloc(rows*(cols+prefix)* sizeof (*temp));
+			T* temp = 0;
+			temp=(T*)malloc(rows*(cols+prefix)* sizeof (*temp));
 			
 			
 			// read data from shared mem into temp
@@ -308,7 +342,8 @@ class ShMemSymBuff{
 		
 		#ifdef cudaEn
 		//Read symbol into device memory with prefix
-		void readNextSymbolCUDA(cuFloatComplex* dY, int it){
+		template <typename T>
+		inline void readNextSymbolCUDA(T* dY, int it){
 			int rows = numOfRows;
 			int cols = dimension;
 			
@@ -326,7 +361,7 @@ class ShMemSymBuff{
 			
 			if(timerEn){
 				finish = clock();
-				readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot
@@ -344,7 +379,8 @@ class ShMemSymBuff{
 		}
 			
 		//Reads a last symbol into Y doesn't worry about changing ptr index to same as writer since last one
-		void readLastSymbolCUDA(cuFloatComplex* dY){
+		template <typename T>
+		inline void readLastSymbolCUDA(T* dY){
 			int rows = numOfRows;
 			int cols = dimension;
 			
@@ -357,13 +393,14 @@ class ShMemSymBuff{
 			if(timerEn){
 				start = clock();
 			}
-			int size= rows*(cols+prefix)* sizeof (*dY);
+			int size = rows*(cols+prefix)* sizeof (*dY);
 			// read data from shared mem into Y
 			cudaMemcpy(dY,&buff->symbols[buff->readPtr].data[0], size, cudaMemcpyHostToDevice);
 			
+			
 			if(timerEn){
 				finish = clock();
-				readT[numberOfSymbolsToTest-1] = readT[numberOfSymbolsToTest-1] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				readT[numberOfSymbolsToTest-1] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot
@@ -380,7 +417,8 @@ class ShMemSymBuff{
 		#endif
 		
 		//Writes a Symbol into this buffer
-		void writeNextSymbolWithWait(complexF* Yf){
+		template <typename T>
+		inline void writeNextSymbolWithWait(T* Yf){
 			int rows = numOfRows;
 			int cols = dimension+prefix;
 			//writePtr==-1 to start
@@ -411,7 +449,8 @@ class ShMemSymBuff{
 			
 		}
 
-		void writeNextSymbolNoWait(complexF* Yf){
+		template <typename T>
+		inline void writeNextSymbolNoWait(T* Yf){
 			int rows = numOfRows;
 			int cols = dimension+prefix;
 			//writePtr==-1 to start
