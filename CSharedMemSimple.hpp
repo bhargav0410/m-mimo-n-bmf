@@ -5,7 +5,11 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#if HAVE_UNISTD_H
+	#include <unistd.h>
+#else
+	#include <io.h>
+#endif
 #include <sys/mman.h>
 #include <string>
 

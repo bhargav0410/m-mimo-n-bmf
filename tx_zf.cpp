@@ -33,6 +33,8 @@ using boost::asio::ip::udp;
 static bool stop_signal_called = false;
 void sig_int_handler(int){stop_signal_called = true;}
 size_t len = 0;
+boost::array<char, uhd::transport::udp_simple::mtu> rec;
+std::string udp_check;
 void handler(
   const boost::system::error_code& error, // Result of operation.
   size_t length          // Number of bytes received.
@@ -40,16 +42,16 @@ void handler(
 	  len = length;
   } 
 
-void udp_receiver(udp::socket &socket, udp::endpoint &server_endpoint) {
-	boost::array<char, uhd::transport::udp_simple::mtu> rec;
+void sync_receiver(udp::socket &socket, udp::endpoint &server_endpoint) {
 	while (len <= 0) {
 		len = socket.receive_from(boost::asio::buffer(rec), server_endpoint);
 	}
-	/*
-	std::cout << "Rec: ";
-	std::cout.write(rec.data(),len);
-	std::cout << std::endl;
-	*/
+	udp_check.clear();
+	for (int i = 0; i < len; i++) {
+		udp_check.push_back(rec[i]);
+	}
+	//std::cout << udp_check << " " << len;
+	//len = 0;
 }
   
 /***********************************************************************
@@ -85,6 +87,9 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
         ("int-n", "tune USRP with integer-N tuning")
 		("delay", po::value<float>(&delay)->default_value(0), "Delay value in stream time spec")
 		("file", po::value<std::string>(&file), "name of the file to take samples from")
+		("addr", po::value<std::string>(&addr), "IP address of the node")
+		("server-addr", po::value<std::string>(&remote_addr), "IP address of server")
+		("port", po::value<int>(&port), "port number for socket connection")
 		("pn-seq", po::value<bool>(&pn_seq)->default_value(false), "append PN sequence before data")
 		("same-time", po::value<bool>(&same)->default_value(false), "divide data from file amongst channels and send at same time")
 		("verbose","shows the sync messages sent and received via UDP")		
@@ -295,122 +300,87 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 
 	
 	//UDP connection for sync
-	/* std::string flag = "TX";
 	boost::asio::io_service io_service;
 	udp::endpoint local_endpoint(boost::asio::ip::address::from_string(addr), port);
 	udp::endpoint server_endpoint(boost::asio::ip::address::from_string(remote_addr), port);
 	udp::socket socket(io_service, local_endpoint);
 	if (!socket.is_open()) {socket.open(udp::v4());}
+	
+	std::string flag = "Initialized";
 	while (len == 0 and not stop_signal_called) {
 		len = socket.send_to(boost::asio::buffer(flag.c_str(), flag.size()), server_endpoint);
 	}
 	flag.clear();
 	if (vm.count("verbose")) {
-	std::cout << "Starting transmission...\n";
+		std::cout << "Starting transmission...\n";
 	}
 	boost::array<char, uhd::transport::udp_simple::mtu> rec;
-	//boost::array<char, 5> temp = ;
 	len = 0;
-	//rec.resize(uhd::transport::udp_simple::mtu);
 	while (len <= 0 and not stop_signal_called) {
 		len = socket.receive_from(boost::asio::buffer(rec), server_endpoint);
+		if (len > 0) {
+			//std::cout << " Len > 0...\n";
+			if (udp_check.compare("Start_TX") == 0) {
+				len = 0;
+				break;
+			} 
+			else {
+				len = 0;
+				len = socket.receive_from(boost::asio::buffer(rec), server_endpoint);
+			}
+		}
 	}
-	if (vm.count("verbose")) {
-	std::cout << "Rec: ";
-	std::cout.write(rec.data(),len);
-	std::cout << std::endl;
-	}
-	len = 0; */
-	
-	
-	
-	
+
 	
 	uhd::tx_metadata_t md;
-
-	//for (int j = 0; j < num_times; j++) {
-		//for (int i  = 0; i <= channel_nums.size(); i++){
-	//if (stop_signal_called) break;
-	
-	
-	
-	/*
-	if (i != channel_nums.size()) {
-		for (size_t ch = 0; ch < channel_nums.size(); ch++) {
-			for (size_t n = 0; n < buff.at(ch).size(); n++){
-				if (ch == i) { 
-					buff.at(ch)[n] = temp_buff.at(ch)[n];
-				}
-				else {
-					buff.at(ch)[n] = 0;
-				}
-			}
-		}
-	}
-	else {
-		for (size_t ch = 0; ch < channel_nums.size(); ch++) {
-			for (size_t n = 0; n < buff.at(ch).size(); n++){
-				buff.at(ch)[n] = temp_buff.at(ch)[n];
-			}
-		}
-	}
-	*/
-
-	
-	/* while (len <= 0 and not stop_signal_called) {
-		len = socket.receive_from(boost::asio::buffer(rec), server_endpoint);
-	}
-	if (vm.count("verbose")) {
-	std::cout << "Rec: ";
-	std::cout.write(rec.data(),len);
-	std::cout << std::endl;
-	}
-	len = 0; */
-
-	
-	
 	md.start_of_burst = false;
 	md.end_of_burst   = false;
 	md.has_time_spec = true;
 	std::cout << "Sending samples...\n";
-	/* flag += "Start RX";
+	flag += "Started";
 	if (vm.count("verbose")) {
-	std::cout << flag << std::endl;
+		std::cout << flag << std::endl;
 	}
 	while (len == 0 and not stop_signal_called) {
 		len = socket.send_to(boost::asio::buffer(flag.c_str(), flag.size()), server_endpoint);
 	}
 	flag.clear();
-	len = 0; */
+	len = 0;
 	
 	//socket.non_blocking(true);
-	//boost::thread t(udp_receiver, boost::ref(socket), boost::ref(server_endpoint));
+	boost::thread t(sync_receiver, boost::ref(socket), boost::ref(server_endpoint));
 	md.time_spec = usrp->get_time_now() + uhd::time_spec_t(delay);
 	while(not stop_signal_called){
 		//send the entire contents of the buffer
 		tx_stream->send(buffs, buff.at(0).size(), md);
 		md.has_time_spec = false;
+		
+		if (len > 0) {
+			if (udp_check.compare("Stop_TX") == 0) {
+				len = 0;
+				break;
+			} 
+			else {
+				len = 0;
+				boost::thread udp_rec(sync_receiver, boost::ref(socket), boost::ref(server_endpoint));
+			}
+		}
 	}
 	md.end_of_burst = true;
 	tx_stream->send("", 0, md);
-	//len = 0;
-//	boost::this_thread::sleep(boost::posix_time::milliseconds(1000));
-	/* flag += "Stopped";
+	std::cout << "Samples sent...\n";
+
+	flag += "Stopped_TX";
 	if (vm.count("verbose")) {
-	std::cout << flag << std::endl;
+		std::cout << flag << std::endl;
 	}
 	while (len == 0 and not stop_signal_called) {
 		len = socket.send_to(boost::asio::buffer(flag.c_str(), flag.size()), server_endpoint);
 	}
 	flag.clear();
-	len = 0; */
+	len = 0;
 	
-	std::cout << "Samples sent...\n";
-			
-	//	}
-//	}
-
-
+	
 	//send a mini EOB packet
 	//md.end_of_burst = true;
     //finished

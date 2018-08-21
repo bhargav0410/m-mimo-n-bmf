@@ -3,7 +3,6 @@
 #endif
 
 //Shared Memory 
-#include "ShMemSymBuff_cucomplex.hpp"
 #include "gpuLS.cuh"
 #include <cufft.h>
 #include <cublas_v2.h>
@@ -33,19 +32,22 @@
 //X = 1 x 1023
 //H = 16 x 1023
 using namespace std;
+int device_number = 0;
 
 static bool stop_signal_called = false;
 void sig_int_handler(int){stop_signal_called = true;}
 
 std::string file = "Output_gpu.dat";
-//std::ofstream outfile;
+std::ofstream outfile;
 
 int main(){
+	gpuLS *gpu  = new gpuLS;
+	
 	int rows = numOfRows; // number of vectors
 	int cols=dimension;//dimension
 	device_number = 0;
 	cudaSetDevice(device_number);
-	cudaGetDeviceProperties(&devProp, device_number);
+	cudaGetDeviceProperties(&gpu->devProp, device_number);
 	
 	//dY holds symbol with prefix
 	cuFloatComplex *dY = 0;
@@ -75,29 +77,26 @@ int main(){
 	cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
 	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
 	cudaDeviceSynchronize();
-	
-	
-	//Shared Memory
-	string shm_uid = shmemID;
-	buffPtr=new ShMemSymBuff(shm_uid, mode);
+
 	std::signal(SIGINT, &sig_int_handler);
 	
-	copyPilotToGPU(dX, rows, cols);
-		
+	gpu->copyPilotToGPU(dX, rows, cols);
+	
 	while (not stop_signal_called) {
 		start = clock();
 		for (int it = 0; it < numberOfSymbolsToTest; it++) {
 			if(it==numberOfSymbolsToTest-1){
 				//if last one
-				buffPtr->readLastSymbolCUDA(&Y[rows*cols*it]);
+				gpu->buffPtr->readLastSymbolCUDA(&Y[rows*cols*it]);
 			} else {
-				buffPtr->readNextSymbolCUDA(&Y[rows*cols*it], it);
+				gpu->buffPtr->readNextSymbolCUDA(&Y[rows*cols*it], it);
 			}
 		}
-		demodOneFrameCUDA(dY, Y, dX, dH, Hsqrd, rows, cols);
-		if (timerEn) {
-			printTimes(true);
-			storeTimes(false);
+		cudaDeviceSynchronize();
+		gpu->demodOneFrameCUDA(dY, Y, dX, dH, Hsqrd, rows, cols);
+		if(timerEn) {
+			gpu->buffPtr->printTimes(true);
+			gpu->buffPtr->storeTimes(false);
 		}
 		if(testEn){
 			//printf("Symbol #%d:\n", i);
@@ -116,11 +115,7 @@ int main(){
 	cudaFree(dH);
 	cudaFree(dX);
 	cudaFree(Hsqrd);
-	
-	if(timerEn) {
-		printTimes(true);
-		storeTimes(false);
-	}
+	delete(gpu);
 	
 	return 0;
 

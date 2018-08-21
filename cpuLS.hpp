@@ -12,7 +12,6 @@
 #include <math.h>
 #include <algorithm>
 #include <cblas.h>
-#define mode 0
 #define fileNameForX "Pilots.dat"
 
 /*
@@ -34,7 +33,7 @@
 
 using namespace std;
 ShMemSymBuff* buffPtr;
-
+#define mode 1
 string file = "Output_cpu.dat";
 string in_file = "Input_cpu.dat";
 
@@ -47,6 +46,7 @@ extern "C" {
 	void cgetri_(int* n, complexF* A, int* lda, int* ipiv, complexF* work, int* lwork, int* info);
 	void csytrf_(char* uplo, int* n, complexF* A, int* lda, int* ipiv, complexF* work, int* lwork, int* info);
 	void csytri_(char* uplo, int* n, complexF* A, int* lda, int* ipiv, complexF* work, int* info);
+	float clange_(char* norm, int* m, int* n, complexF* A, int* lda, float* work);
 }
 
 
@@ -218,7 +218,7 @@ void divideOneRow(complexF * A, complexF * B, int cols, int row){
 }
 
 //Finds |H|^2 and H*=Hconj, rows=16 cols=1024
-void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
+void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols, int iter = 0){
 	//Read in X vector -> 1x1023
 	matrix_readX(X, cols-1);
 	//printOutArr(X, 1, cols-1);
@@ -234,11 +234,16 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	}
 	
 	//Do pre FFT bc library doesn't work first time
-	fftOneRow(Y, cols, 0);
+	//fftOneRow(Y, cols, 0);
 	
 	//Read in Y (get rid of prefix)
-	buffPtr->readNextSymbol(Y, 0);
-	
+	/*
+	if (iter < numberOfSymbolsToTest) {
+		buffPtr->readNextSymbol(Y, iter);
+	} else {
+		buffPtr->readLastSymbol(Y);
+	}
+	*/
 	clock_t start, finish;
 	if(timerEn){
 		start = clock();
@@ -250,7 +255,7 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	}
 	if(timerEn){
 		finish = clock();
-		fft[0] = fft[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		fft[iter] = fft[iter] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 	
 	if(timerEn){
@@ -281,7 +286,7 @@ void firstVector(complexF* Y, complexF* Hconj, complexF* X, int rows, int cols){
 	
 	if(timerEn){
 		finish = clock();
-		decode[0] = decode[0] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+		decode[iter] = decode[iter] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 	}
 }
 
@@ -361,7 +366,7 @@ void addPrefix(complexF* Y, complexF* dY, int rows, int cols) {
 	
 	for (int row = 0; row < rows; row++) {
 		memcpy(&Y[row*(cols + prefix)], &dY[row*cols + (cols - prefix)], prefix*sizeof(*dY));
-		memcpy(&Y[row*(cols + prefix) + prefix], &dY[row*cols], cols*sizeof(dY));
+		memcpy(&Y[row*(cols + prefix) + prefix], &dY[row*cols], cols*sizeof(*dY));
 	}
 	
 }
@@ -431,39 +436,70 @@ void multiplyWithChannelInv(complexF* HX, complexF* X, complexF* H, int rows, in
 	free(vec);
 }
 
-void modRefSymbol(complexF* Y, complexF* X, int rows, int cols) {
+
+void modRefSymbol(complexF* Y, complexF* X, int cols) {
 	
 	matrix_readX(X, cols-1);
+	complexF* dY;
+	dY = (complexF *)calloc(cols,sizeof(*dY));
+	float* work;
+	work = (float *)malloc(cols*sizeof(*work));
+	char norm = 'M';
+	int temp = 1;
+	float maxval;
 	
+	memcpy(&dY[1], X, (cols-1)*sizeof(*X));
+		
+	ifftShiftOneRow(dY, cols, 0);
+	ifftOneRow(dY, cols, 0);
+	
+	
+	maxval = 1/clange_(&norm, &cols, &temp, dY, &cols, work);
+	cblas_csscal(cols, maxval, (float *)dY, 1);
+		
+	addPrefix(Y, dY, 1, cols);
+	free(dY);
+	free(work);
+}
+
+
+void modOneSymbol(complexF* Y, complexF* H, complexF* X, int rows, int cols, int users, bool chanMultiply = false) {
+	if (chanMultiply == true) {
+		multiplyWithChannelInv(Y, H, X, rows, cols, users);
+	} else {
+		rows = users;
+		memcpy(Y, X, rows*(cols-1)*sizeof(*X));
+		
+	}
 	complexF* dY;
 	dY = (complexF *)calloc(rows*cols,sizeof(*dY));
+	float* work;
+	work = (float *)malloc(cols*sizeof(*work));
+	char norm = 'M';
+	int temp = 1;
+	float maxval;
 	
 	for (int row = 0; row < rows; row++) {
-		//dY[row*cols] = 0;
-		memcpy(&dY[row*(cols) + 1], X, (cols-1)*sizeof(*X));
+	//	dY[row*cols].real = 0;
+	//	dY[row*cols].real = 0;
+		memcpy(&dY[row*cols + 1], &Y[row*(cols-1)], (cols-1)*sizeof(*Y));
 		
 		ifftShiftOneRow(dY, cols, row);
 		ifftOneRow(dY, cols, row);
+		/*
+		int temp = cblas_icamax(cols, (float *)&dY[row*cols], 1);
+		std::cout << temp << std::endl;
+		float temp2 = 1/std::sqrt(dY[temp + row*cols].real*dY[temp + row*cols].real + dY[temp + row*cols].imag*dY[temp + row*cols].imag);
+		cblas_csscal(cols, temp2, (float *)&dY[row*cols], 1);
+		*/
+		maxval = 1/clange_(&norm, &cols, &temp, &dY[row*cols], &cols, work);
+		//std::cout << maxval << std::endl;
+		cblas_csscal(cols, maxval, (float *)&dY[row*cols], 1);
 	}
 	
 	addPrefix(Y, dY, rows, cols);
 	free(dY);
-}
-
-void modOneSymbol(complexF* Y, complexF* H, complexF* X, int rows, int cols, int users) {
-	multiplyWithChannelInv(Y, H, X, rows, cols, users);
-	complexF* dY;
-	dY = (complexF *)calloc(rows*cols,sizeof(*dY));
-	
-	for (int row = 0; row < rows; row++) {
-		//dY[row*cols] = 0;
-		memcpy(&dY[row*(cols) + 1], &Y[row*(cols-1)], (cols-1)*sizeof(*Y));
-		
-		ifftShiftOneRow((complexF *)dY, cols, row);
-		ifftOneRow((complexF *)dY, cols, row);
-	}
-	
-	addPrefix(Y, dY, rows, cols);
+	free(work);
 }
 
 #endif

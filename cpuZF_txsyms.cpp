@@ -59,18 +59,14 @@ int main(){
 	// Create shared memory space, return pointer and set as master.
 	//buffPtr=new ShMemSymBuff(shm_uid, mode);
 	std::signal(SIGINT, &sig_int_handler);
-
-	std::ifstream infile;
+	
+	for (int u = 0; u < users; u++) {
+		
+	}
+	
 	infile.open("Symbols.dat", std::ifstream::binary);
 	infile.read((char *)X, (cols-1)*numberOfSymbolsToTest*users*sizeof(*X));
 	infile.close();
-	clock_t start, finish;
-	modRefSymbol(Y, X, cols);
-	outfile.open("refSymbol.dat", std::ofstream::binary | std::ofstream::trunc);
-	for (int i = 0; i < rows; i++) {
-		outfile.write((const char*)Y, (cols+prefix)*sizeof(*Y));
-	}
-	outfile.close();
 	
 	
 	for (int i = 0; i < numberOfSymbolsToTest; i++) {
@@ -90,7 +86,7 @@ int main(){
 		}
 	}
 
-	std::string file = "refSymbolTest.dat";
+	std::string file = "OFDMPacket.dat";
 	outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
 	outfile.write((const char*)Y, users*(cols+prefix)*numberOfSymbolsToTest*sizeof(*Y));
 	outfile.close();

@@ -61,9 +61,6 @@ int main(){
 	std::signal(SIGINT, &sig_int_handler);
 
 	std::ifstream infile;
-	infile.open("Symbols.dat", std::ifstream::binary);
-	infile.read((char *)X, (cols-1)*numberOfSymbolsToTest*users*sizeof(*X));
-	infile.close();
 	clock_t start, finish;
 	modRefSymbol(Y, X, cols);
 	outfile.open("refSymbol.dat", std::ofstream::binary | std::ofstream::trunc);
@@ -71,54 +68,6 @@ int main(){
 		outfile.write((const char*)Y, (cols+prefix)*sizeof(*Y));
 	}
 	outfile.close();
-	
-	
-	for (int i = 0; i < numberOfSymbolsToTest; i++) {
-		if (timerEn) {
-			start = clock();
-		}
-		for (int u = 0; u < users; u++) {
-			memcpy(&dX[u*(cols-1)], &X[i*(cols-1) + u*(numberOfSymbolsToTest)*(cols-1)], (cols-1)*sizeof(*X));
-		}
-		modOneSymbol(dY, Hconj, dX, rows, cols, users);
-		for (int u = 0; u < users; u++) {
-			memcpy(&Y[i*(cols+prefix) + u*(numberOfSymbolsToTest)*(cols+prefix)], &dY[u*(cols+prefix)], (cols+prefix)*sizeof(*dY));
-		}
-		if (timerEn) {
-			finish = clock();
-			decode[i] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
-		}
-	}
-
-	std::string file = "refSymbolTest.dat";
-	outfile.open(file.c_str(), std::ofstream::binary | std::ofstream::trunc);
-	outfile.write((const char*)Y, users*(cols+prefix)*numberOfSymbolsToTest*sizeof(*Y));
-	outfile.close();
-	
-	
-	
-	/*
-	for (int i = 0; i < 6; i++) {
-		X[i].real = rand()%10;
-		X[i].imag = rand()%10;
-		std::cout << "( " << X[i].real << ", " << X[i].imag << ")";
-	}
-	std::cout << "\n";
-	
-	//X[0].real = 7;X[1].real = 8;X[2].real = 11;X[3].real = 13;X[4].real = 16;X[5].real = 21;
-	//Hconj[0].real = 1;Hconj[1].real = 2;Hconj[2].real = 3;Hconj[3].real = 4;
-	
-	createZeroForcingMatrix(Hconj, X, 3, 2, 2);
-	
-	multiplyWithChannelInv(Y, Hconj, X, 3, 2, 2);
-	
-	for (int i = 0; i < 3*3 ; i++) {
-		std::cout << "( " << Y[i].real << ", " << Y[i].imag << ")";
-	}
-	std::cout << "\n";
-//	std::cout << "H matrix: " << Hconj[0].real << ", " << Hconj[1].real << ", " << Hconj[2].real << ", " << Hconj[3].real << std::endl;
-	
-	*/
 	
 	free(Y);
 	free(dY);

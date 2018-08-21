@@ -21,7 +21,7 @@
 
 //16 x 1024
 #ifndef numOfRows
-	#define numOfRows 1
+	#define numOfRows 16
 #endif
 
 #ifndef numUsers
@@ -44,29 +44,14 @@
   #define testEnabled true
 #endif
 
-std::ofstream outfile;
-
-//100
 #ifndef lenOfBuffer
-	#define lenOfBuffer 117
+	#define lenOfBuffer 101
 #endif
 #define numberOfSymbolsToTest lenOfBuffer
 #define shmemID "/blah"
 #define PL printf("Line #: %d \n", __LINE__);
 #define timerEn timerEnabled
 #define testEn testEnabled
-
-
-//Number of times the program is to be run
-float numTimes = 1;
-
-//Timing
-float readT[numberOfSymbolsToTest];
-//First one is time to solve for H
-float decode[numberOfSymbolsToTest];
-//Time to drop prefix
-float drop[numberOfSymbolsToTest];
-float fft[numberOfSymbolsToTest];
 
 //complexNumber
 struct complexF{
@@ -91,93 +76,6 @@ struct symbolBuffer {
   symbol symbols[lenOfBuffer];
 };
 
-void printOutArr(complexF* a, int rows, int cols){
-	for (int i = 0; i<rows; i++){  
-		for (int j = 0; j<cols; j++){
-			std::cout<<"("<<a[i*cols + j].real<<", "<<a[i*cols + j].imag<<"), ";
-		}
-		printf("\n");
-	}
-}
-
-void printInfo(){
-	printf("\tSymbol Dimension(w/o prefix) = %d x %d \n", numOfRows, dimension);
-	printf("\tPrefix = %d\n", prefix);
-	printf("\t# Of Symbols To Test = %d\n", numberOfSymbolsToTest);
-	
-}
-
-//real=avg and imag = var
-complexF findAvgAndVar(float* times, int amt){
-	float avgTime = 0;
-	
-	for(int i =0; i< amt; i++){
-		//print out
-		//printf("Time = %e \n", times[i]);
-		avgTime = avgTime+ times[i];
-	}
-	//Find avg 
-	avgTime = avgTime/amt;
-	
-	float variance = 0;
-	for(int i=0; i<amt; i++){
-		variance = variance + (times[i]-avgTime) *(times[i]-avgTime);
-	}
-	variance = variance/amt;
-	
-	complexF c;
-	c.real = avgTime;
-	c.imag = variance;
-	return c;
-			
-}
-
-void printTimes(bool cpu){
-	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
-	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
-	complexF FFTtime = findAvgAndVar(&fft[1], numberOfSymbolsToTest-1);
-	printf("\t \t Avg Time(s) \t Variance (s^2) \n");
-	printf("Read/Write: \t \t %e \t %e \n", readtime.real/numTimes, readtime.imag/numTimes);
-	printf("ChanEst: \t %e \n", (decode[0] + FFTtime.real + readtime.real)/numTimes);
-	printf("Mod/Demod: \t %e \t %e \n", decodetime.real/numTimes, decodetime.imag/numTimes);
-	printf("FFT: \t \t %e \t %e \n", FFTtime.real/numTimes, FFTtime.imag/numTimes);
-	printf("Frame: \t \t %e \n", (((FFTtime.real + readtime.real + decodetime.real)*(lenOfBuffer-1))/numTimes));
-	
-	if(cpu){
-		complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
-		printf("Drop: \t \t %e \t %e \n", dropTime.real/numTimes, dropTime.imag/numTimes);
-		
-	}
-}
-
-void storeTimes(bool cpu) {
-	complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
-	complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
-	complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest-1);
-	complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
-	readtime.real = readtime.real/numTimes;
-	decodetime.real = decodetime.real/numTimes;
-	FFTtime.real = FFTtime.real/numTimes;
-	dropTime.real = dropTime.real/numTimes;
-	decode[0] = decode[0]/numTimes;
-	std::string file;
-	if (cpu == false){
-		file = "time_gpu.dat";
-	}
-	else {
-		file = "time_cpu.dat";
-	}
-	outfile.open(file.c_str(), std::ofstream::binary);
-	outfile.write((const char*)&readtime.real, sizeof(float));
-	outfile.write((const char*)&decode[0], sizeof(float));
-	outfile.write((const char*)&decodetime.real, sizeof(float));
-	outfile.write((const char*)&FFTtime.real, sizeof(float));
-	outfile.write((const char*)&dropTime.real, sizeof(float));
-	outfile.close();
-}
-
-
-int buffIter = 0;
 
 class ShMemSymBuff{
 	private:
@@ -185,8 +83,16 @@ class ShMemSymBuff{
 		CSharedMemSimple* shm_bufPtr;
 		bool isMast;
 		clock_t start, finish;
-
+		//Timing
+		float readT[numberOfSymbolsToTest];
+		//First one is time to solve for H
+		float decode[numberOfSymbolsToTest];
+		//Time to drop prefix
+		float drop[numberOfSymbolsToTest];
+		float fft[numberOfSymbolsToTest];
+		
 	public:
+		
 		// Constructor - create a shared memory space for symbols
 		ShMemSymBuff(std::string shm_uid, int isMaster){
 			shm_bufPtr = new CSharedMemSimple(shm_uid, sizeof(struct symbolBuffer));
@@ -220,6 +126,108 @@ class ShMemSymBuff{
 
 		void info(){
 			shm_bufPtr->info();
+		}
+		
+		void setReadT(float value, int iter) {
+			readT[iter] = value;
+		}
+		
+		void setFft(float value, int iter) {
+			fft[iter] = value;
+		}
+		
+		void setDecode(float value, int iter) {
+			decode[iter] = value;
+		}
+		
+		void setDrop(float value, int iter) {
+			drop[iter] = value;
+		}
+		
+		void printOutArr(complexF* a, int rows, int cols){
+			for (int i = 0; i<rows; i++){  
+				for (int j = 0; j<cols; j++){
+					std::cout<<"("<<a[i*cols + j].real<<", "<<a[i*cols + j].imag<<"), ";
+				}
+				printf("\n");
+			}
+		}
+
+		void printInfo(){
+			printf("\tSymbol Dimension(w/o prefix) = %d x %d \n", numOfRows, dimension);
+			printf("\tPrefix = %d\n", prefix);
+			printf("\t# Of Symbols To Test = %d\n", numberOfSymbolsToTest);
+			
+		}
+
+		//real=avg and imag = var
+		complexF findAvgAndVar(float* times, int amt){
+			float avgTime = 0;
+			
+			for(int i =0; i< amt; i++){
+				//print out
+				//printf("Time = %e \n", times[i]);
+				avgTime = avgTime+ times[i];
+			}
+			//Find avg 
+			avgTime = avgTime/amt;
+			
+			float variance = 0;
+			for(int i=0; i<amt; i++){
+				variance = variance + (times[i]-avgTime) *(times[i]-avgTime);
+			}
+			variance = variance/amt;
+			
+			complexF c;
+			c.real = avgTime;
+			c.imag = variance;
+			return c;
+					
+		}
+
+		void printTimes(bool cpu){
+			complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
+			complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
+			complexF FFTtime = findAvgAndVar(&fft[1], numberOfSymbolsToTest-1);
+			printf("\t \t Avg Time(s) \t Variance (s^2) \n");
+			printf("Read/Write: \t \t %e \t %e \n", readtime.real, readtime.imag);
+			printf("ChanEst: \t %e \n", (decode[0] + FFTtime.real + readtime.real));
+			printf("Mod/Demod: \t %e \t %e \n", decodetime.real, decodetime.imag);
+			printf("FFT: \t \t %e \t %e \n", FFTtime.real, FFTtime.imag);
+			printf("Frame: \t \t %e \n", (((FFTtime.real + readtime.real + decodetime.real)*(lenOfBuffer-1))));
+			
+			if(cpu){
+				complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
+				printf("Drop: \t \t %e \t %e \n", dropTime.real, dropTime.imag);
+				
+			}
+		}
+
+		void storeTimes(bool cpu) {
+			std::ofstream outfile;
+			complexF readtime = findAvgAndVar(readT, numberOfSymbolsToTest);
+			complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
+			complexF FFTtime = findAvgAndVar(fft, numberOfSymbolsToTest-1);
+			complexF dropTime = findAvgAndVar(drop, numberOfSymbolsToTest);
+			readtime.real = readtime.real;
+			decodetime.real = decodetime.real;
+			FFTtime.real = FFTtime.real;
+			dropTime.real = dropTime.real;
+			decode[0] = decode[0];
+			std::string file;
+			if (cpu == false){
+				file = "time_gpu.dat";
+			}
+			else {
+				file = "time_cpu.dat";
+			}
+			outfile.open(file.c_str(), std::ofstream::binary);
+			outfile.write((const char*)&readtime.real, sizeof(float));
+			outfile.write((const char*)&decode[0], sizeof(float));
+			outfile.write((const char*)&decodetime.real, sizeof(float));
+			outfile.write((const char*)&FFTtime.real, sizeof(float));
+			outfile.write((const char*)&dropTime.real, sizeof(float));
+			outfile.close();
 		}
 		
 		void setBuffLen(int size_) {
@@ -256,7 +264,7 @@ class ShMemSymBuff{
 			}
 			if(timerEn){
 				finish = clock();
-				readT[it] = readT[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+				readT[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 			}
 			
 			//once you are done reading to that spot
@@ -283,7 +291,7 @@ class ShMemSymBuff{
 				}
 				if(timerEn){
 					finish = clock();
-					drop[it] = drop[it] + ((float)(finish - start))/(float)CLOCKS_PER_SEC;
+					drop[it] = ((float)(finish - start))/(float)CLOCKS_PER_SEC;
 				}
 			}
 			
