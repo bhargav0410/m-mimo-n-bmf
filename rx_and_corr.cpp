@@ -19,7 +19,7 @@
 #include <ctime>
 #include <sys/socket.h>
 #include <string>
-#include "ShMemSymBuff_cucomplex.hpp"
+#include "ShMemSymBuff_gpu.hpp"
 
 #define FFT_size dimension
 #define numSymbols lenOfBuffer
@@ -57,6 +57,7 @@ void copy_to_shared_mem(int chan) {
 		buffPtr->writeNextSymbolNoWait(copy_to_mem);
 	}
 	iter++;
+	free(copy_to_mem);
 }
 
 int UHD_SAFE_MAIN(int argc, char *argv[]){
@@ -379,6 +380,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
 		
     }
 	rx_stream->issue_stream_cmd(uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS);
+	t.join();
 	
 	if (not file.empty()) {
 		for (int i = 0; i < channel_nums.size(); i++) {

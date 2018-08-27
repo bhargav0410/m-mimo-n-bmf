@@ -55,8 +55,20 @@ class gpuLS {
 		void matrix_readX(cuFloatComplex*, int);
 
 		void copyPilotToGPU(cuFloatComplex*, int, int);
-
+		
 		void shiftOneRowCPU(cuFloatComplex*, int, int);
+		
+		void ShiftOneRow(cuFloatComplex*, int, int, dim3, dim3);
+		
+		void DropPrefix(cuFloatComplex*, cuFloatComplex*, int, int, dim3, dim3);
+		
+		void FindLeastSquaresGPU(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, int, int, dim3, dim3);
+		
+		void FindHsqrdforMRC(cuFloatComplex*, float*, int, int, dim3, dim3);
+		
+		void MultiplyWithChannelConj(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, int, int, int, dim3, dim3);
+		
+		void CombineForMRC(cuFloatComplex*, float*, int, int, dim3, dim3);
 
 		void firstVector(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, float*, int, int, int);
 
@@ -68,7 +80,7 @@ class gpuLS {
 
 		void demodOptimized(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, float*, int, int);
 
-		void demodCublas(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, float*, int, int);
+		void demodCuBlas(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, float*, int, int);
 
 };
 #endif

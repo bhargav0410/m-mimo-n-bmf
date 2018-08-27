@@ -130,7 +130,7 @@ __global__ void dropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int
 	
 }
 
-__global__ void findHs(cuFloatComplex* dY,cuFloatComplex* dH, cuFloatComplex* dX, int rows1, int cols1){	
+__global__ void findHs(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, int rows1, int cols1){	
 	int cols = cols1-1;
 	int rows = rows1;
 	int tid = (blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*cols + threadIdx.x;
@@ -164,6 +164,7 @@ __global__ void findDistSqrd(cuFloatComplex* H, float* Hsqrd, int rows1, int col
 	extern __shared__ cuFloatComplex temp[];
 	int sid = threadIdx.x*cols + blockIdx.x*blockDim.y + threadIdx.y;
 	int tempID = threadIdx.y*rows + threadIdx.x;
+	
 	if (sid < rows*cols) {
 		temp[tempID] = H[sid];
 	}
@@ -191,19 +192,17 @@ __global__ void multiplyWithChannelConj(cuFloatComplex* Y, cuFloatComplex* Hconj
 	//Y x conj(H) -> then sum all rows into elements in Hsqrd
 	//Y = 16x1024+prefix
 	//conjH = 16x1023
-	int row = blockIdx.x;
-	int sym = blockIdx.z;
-	int j = threadIdx.x;
-	int tid = (blockIdx.z*gridDim.y*gridDim.x*blockDim.y + blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*cols + threadIdx.x;
-	int tid2 = (blockIdx.z*gridDim.y*gridDim.x*blockDim.y + blockIdx.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*(cols+1) + threadIdx.x+1;
+	int tid = (blockIdx.z*gridDim.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*cols + blockIdx.y*blockDim.x + threadIdx.x;
+	int tid2 = (blockIdx.z*gridDim.y*gridDim.x*blockDim.y + blockIdx.x*blockDim.y + threadIdx.y)*(cols+1) + blockIdx.y*blockDim.x + threadIdx.x + 1;
+	int hid = blockIdx.x*blockDim.y*cols + blockIdx.y*blockDim.x + threadIdx.y*cols + threadIdx.x;
 	
-	if ((blockIdx.y + threadIdx.y)*cols + threadIdx.x < cols) {
+	if (blockIdx.y*blockDim.x + threadIdx.x < cols) {
 		Yf[tid] = Y[tid2];
 	}
 	__syncthreads();
 	
 	if (tid < rows*cols*syms) {
-		Yf[tid] = cuCmulf(Yf[tid],Hconj[row*blockDim.x + j]);
+		Yf[tid] = cuCmulf(Yf[tid],Hconj[hid]);
 	}
 	__syncthreads();
 }
@@ -234,6 +233,33 @@ __global__ void combineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int co
 	}
 }
 
+/*-----------------------------------GPU kernel calling functions--------------------------------------*/
+
+void gpuLS::ShiftOneRow(cuFloatComplex* Y, int cols1, int rows1, dim3 blockDim, dim3 gridDim) {
+	shiftOneRow<< <gridDim, blockDim>> >(Y, cols1, rows1);
+}
+
+void gpuLS::DropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
+	dropPrefix<< <gridDim, blockDim>> >(Y, dY, rows1, cols1);
+}
+
+void gpuLS::FindLeastSquaresGPU(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
+	findHs<< <gridDim, blockDim>> >(dY, dH, dX, rows1, cols1);
+}
+
+void gpuLS::FindHsqrdforMRC(cuFloatComplex* H, float* Hsqrd, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
+	size_t sharedMemSize = blockDim.x*blockDim.y*blockDim.z;
+	findDistSqrd<< <gridDim, blockDim, sharedMemSize>> >(H, Hsqrd, rows1, cols1);
+}
+
+void gpuLS::MultiplyWithChannelConj(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Yf, int rows1, int cols1, int syms1, dim3 blockDim, dim3 gridDim) {
+	multiplyWithChannelConj<< <gridDim, blockDim>> >(Y, Hconj, Yf, rows1, cols1, syms1);
+}
+
+void gpuLS::CombineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
+	size_t sharedMemSize = blockDim.x*blockDim.y*blockDim.z;
+	combineForMRC<< <gridDim, blockDim, sharedMemSize>> >(Y, Hsqrd, rows1, cols1);
+}
 
 /*-----------------------------------CuBlas based functions--------------------------------------*/
 
@@ -252,6 +278,34 @@ __global__ void findDistSqrdCuBlas(cuFloatComplex* H, float* Hsqrd, int rows1, i
 	cublasDestroy(handle);
 }
 
+__global__ void multiplyWithChanEstCuBlas(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Yf, float* Hsqrd, int rows1, int cols1, int syms1 = 1) {
+	int rows = rows1, cols = cols1-1, syms = syms1;
+	int tid = blockIdx.z*gridDim.y*blockDim.y*cols + blockIdx.y*blockDim.x + threadIdx.y*cols + threadIdx.x;
+	int tid2 = blockIdx.z*gridDim.y*blockDim.y*(cols+1)*rows + blockIdx.y*blockDim.x + threadIdx.y*(cols+1) + threadIdx.x + 1;
+	int hid = blockIdx.y*blockDim.x + threadIdx.y*cols + threadIdx.x;
+	cublasHandle_t handle;
+	cublasCreate(&handle);
+	
+	/*
+	if ((blockIdx.y + threadIdx.y)*cols + threadIdx.x < cols) {
+		Yf[tid] = Y[tid2];
+	}
+	__syncthreads();
+	*/
+	
+	if (tid2 < rows*(cols+1)*syms) {
+		cublasCdotc(handle, rows, &Hconj[hid], cols,  &Y[tid2], cols + 1, &Yf[tid]);;
+	}
+	__syncthreads();
+	
+	if (tid < cols*syms) {
+		Yf[tid].x = Yf[tid].x/Hsqrd[hid];
+		Yf[tid].y = Yf[tid].y/Hsqrd[hid];
+	}
+	
+	cublasDestroy(handle);
+	
+}
 
 /*-----------------------------------Host Functions--------------------------------------*/
 
@@ -559,7 +613,8 @@ void gpuLS::demodOneFrameCUDA(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComp
 	combineForMRC<< <gridDims2, numOfBlocks, numOfBlocks*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
 	cudaDeviceSynchronize();
 	if (threadsPerBlock <= maxThreads) {
-		shiftOneRow<< <(1,lenOfBuffer-1), threadsPerBlock-1, (threadsPerBlock-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+		dim3 gridDims3(1,lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, threadsPerBlock-1, (threadsPerBlock-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
 		cudaDeviceSynchronize();
 	} else {
 		dim3 gridDims3(ceil((float)threadsPerBlock/(float)maxThreads), lenOfBuffer-1);
@@ -614,22 +669,22 @@ void gpuLS::demodOptimized(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex
 	}
 	
 	if (threadsPerBlock <= maxThreads) {
-		dim3 chanEstBlockDim(threadsPerBlock,ceil((float)maxThreads/(float)threadsPerBlock));
-		dim3 chanEstGridDim(ceil((float)numOfBlocks/ceil((float)maxThreads/(float)threadsPerBlock)),1);
-		findHs<< <numOfBlocks, threadsPerBlock>> >(Y, Hconj, dX, rows, cols);
-	//	cudaDeviceSynchronize();
+		dim3 chanEstBlockDim(cols,ceil((float)maxThreads/(float)cols));
+		dim3 chanEstGridDim(ceil((float)rows/ceil((float)maxThreads/(float)cols)),1);
+		findHs<< <chanEstGridDim, chanEstBlockDim>> >(Y, Hconj, dX, rows, cols);
+		cudaDeviceSynchronize();
 		//Save |H|^2 into Hsqrd
 	} else {
 		dim3 chanEstBlockDim1(maxThreads);
-		dim3 chanEstGridDim1(numOfBlocks,ceil((float)threadsPerBlock/(float)maxThreads));
+		dim3 chanEstGridDim1(rows,ceil((float)cols/(float)maxThreads));
 		findHs<< <chanEstGridDim1, chanEstBlockDim1>> >(Y, Hconj, dX, rows, cols);
-	//	cudaDeviceSynchronize();
+		cudaDeviceSynchronize();
 		//Save |H|^2 into Hsqrd
 	}
 	
-	dim3 distSqrdBlockDim(numOfBlocks,ceil((float)maxThreads/(float)numOfBlocks));
-	dim3 distSqrdGridDim(ceil((float)(threadsPerBlock-1)/ceil((float)maxThreads/(float)numOfBlocks)),1);
-	findDistSqrd<< <threadsPerBlock-1,numOfBlocks, maxThreads*sizeof(cuFloatComplex)>> >(Hconj, Hsqrd, rows, cols-1);
+	dim3 distSqrdBlockDim(rows,ceil((float)maxThreads/(float)rows));
+	dim3 distSqrdGridDim(ceil((float)(cols-1)/ceil((float)maxThreads/(float)rows)),1);
+	findDistSqrd<< <distSqrdGridDim, distSqrdBlockDim, maxThreads*sizeof(cuFloatComplex)>> >(Hconj, Hsqrd, rows, cols-1);
 	
 	if(timerEn){
 		finish = clock();
@@ -642,27 +697,28 @@ void gpuLS::demodOptimized(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex
 	cuFloatComplex* Yf = 0;
 	cudaMalloc((void**)&Yf, rows*(cols-1)*(lenOfBuffer-1)* sizeof (*Yf));
 	if (threadsPerBlock <= maxThreads) {
-		dim3 blockDims1(threadsPerBlock,ceil((float)maxThreads/(float)threadsPerBlock));
-		dim3 gridDims1(ceil((float)numOfBlocks/ceil((float)maxThreads/(float)threadsPerBlock)), 1, lenOfBuffer-1);
+		dim3 blockDims1(cols,ceil((float)maxThreads/(float)cols));
+		dim3 gridDims1(ceil((float)rows/ceil((float)maxThreads/(float)cols)), 1, lenOfBuffer-1);
 		multiplyWithChannelConj<< <gridDims1, blockDims1>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
-	//	cudaDeviceSynchronize();
+		cudaDeviceSynchronize();
 	} else {
-		dim3 gridDims1(numOfBlocks, ceil((float)threadsPerBlock/(float)maxThreads), lenOfBuffer-1);
+		dim3 gridDims1(rows, ceil((float)cols/(float)maxThreads), lenOfBuffer-1);
 		multiplyWithChannelConj<< <gridDims1, maxThreads>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
-	//	cudaDeviceSynchronize();
+		cudaDeviceSynchronize();
 	}
 	
-	dim3 blockDims2(numOfBlocks,ceil((float)maxThreads/(float)numOfBlocks));
-	dim3 gridDims2(ceil((float)(threadsPerBlock-1)/ceil((float)maxThreads/(float)numOfBlocks)), lenOfBuffer-1);
+	dim3 blockDims2(rows,ceil((float)maxThreads/(float)rows));
+	dim3 gridDims2(ceil((float)(cols-1)/ceil((float)maxThreads/(float)rows)), lenOfBuffer-1);
 	combineForMRC<< <gridDims2, blockDims2, maxThreads*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
 	cudaDeviceSynchronize();
 	if (cols <= maxThreads) {
-		shiftOneRow<< <(1,lenOfBuffer-1), ((threadsPerBlock-1),ceil((float)maxThreads/(float)(threadsPerBlock-1))), (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
-	//	cudaDeviceSynchronize();
+		dim3 gridDims3(1,lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, cols-1, (cols-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+		cudaDeviceSynchronize();
 	} else {
-		dim3 gridDims3(ceil((float)(threadsPerBlock-1)/(float)maxThreads), lenOfBuffer-1);
-		shiftOneRow<< <gridDims3, maxThreads, (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
-	//	cudaDeviceSynchronize();
+		dim3 gridDims3(ceil((float)cols/(float)maxThreads), lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, maxThreads, (cols-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+		cudaDeviceSynchronize();
 	}
 	cudaMemcpy(dY, Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*dY), cudaMemcpyDeviceToHost);
 	
@@ -673,7 +729,7 @@ void gpuLS::demodOptimized(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex
 	cudaFree(Yf);
 }
 
-void gpuLS::demodCublas(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dX, cuFloatComplex *Hconj, float *Hsqrd, int rows1, int cols1) {
+void gpuLS::demodCuBlas(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dX, cuFloatComplex *Hconj, float *Hsqrd, int rows1, int cols1) {
 //	cublasHandle_t handle;
 //	cublasCreate(&handle);
 	
@@ -706,18 +762,18 @@ void gpuLS::demodCublas(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* d
 		start = clock();
 	}
 	
-	if (threadsPerBlock <= maxThreads) {
-		dim3 chanEstBlockDim(threadsPerBlock,ceil((float)maxThreads/(float)threadsPerBlock));
-		dim3 chanEstGridDim(ceil((float)numOfBlocks/ceil((float)maxThreads/(float)threadsPerBlock)),1);
+	if (cols <= maxThreads) {
+		dim3 chanEstBlockDim(cols,ceil((float)maxThreads/(float)cols));
+		dim3 chanEstGridDim(ceil((float)rows/ceil((float)maxThreads/(float)cols)),1);
 		findHs<< <chanEstGridDim, chanEstBlockDim>> >(Y, Hconj, dX, rows, cols);
-		findDistSqrdCuBlas<< <1, cols>> >(Hconj, Hsqrd, rows, cols-1);
+		findDistSqrdCuBlas<< <1, cols-1>> >(Hconj, Hsqrd, rows, cols-1);
 	//	cudaDeviceSynchronize();
 		//Save |H|^2 into Hsqrd
 	} else {
 		dim3 chanEstBlockDim1(maxThreads);
-		dim3 chanEstGridDim1(numOfBlocks,ceil((float)threadsPerBlock/(float)maxThreads));
+		dim3 chanEstGridDim1(rows,ceil((float)cols/(float)maxThreads));
 		findHs<< <chanEstGridDim1, chanEstBlockDim1>> >(Y, Hconj, dX, rows, cols);
-		findDistSqrdCuBlas<< <chanEstGridDim1, chanEstBlockDim1>> >(Hconj, Hsqrd, rows, cols-1);
+		findDistSqrdCuBlas<< <ceil((float)cols/(float)maxThreads), chanEstBlockDim1>> >(Hconj, Hsqrd, rows, cols-1);
 
 	//	cudaDeviceSynchronize();
 		//Save |H|^2 into Hsqrd
@@ -734,28 +790,24 @@ void gpuLS::demodCublas(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* d
 	}
 	cuFloatComplex* Yf = 0;
 	cudaMalloc((void**)&Yf, rows*(cols-1)*(lenOfBuffer-1)* sizeof (*Yf));
-	if (threadsPerBlock <= maxThreads) {
-		dim3 blockDims1(threadsPerBlock,ceil((float)maxThreads/(float)threadsPerBlock));
-		dim3 gridDims1(ceil((float)numOfBlocks/ceil((float)maxThreads/(float)threadsPerBlock)), 1, lenOfBuffer-1);
-		multiplyWithChannelConj<< <gridDims1, blockDims1>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+	if (cols <= maxThreads) {
+		dim3 blockDims1(cols,ceil((float)maxThreads/(float)cols));
+		dim3 gridDims1(1, 1, ceil((float)lenOfBuffer-1/(ceil((float)maxThreads/(float)cols))));
+		multiplyWithChanEstCuBlas<< <gridDims1, blockDims1>> >(&Y[rows*cols], Hconj, Yf, Hsqrd, rows, cols, numberOfSymbolsToTest-1);
 	//	cudaDeviceSynchronize();
 	} else {
-		dim3 gridDims1(numOfBlocks, ceil((float)threadsPerBlock/(float)maxThreads), lenOfBuffer-1);
-		multiplyWithChannelConj<< <gridDims1, maxThreads>> >(&Y[rows*cols], Hconj, Yf, rows, cols, numberOfSymbolsToTest-1);
+		dim3 gridDims1(1, ceil((float)cols/(float)maxThreads), lenOfBuffer-1);
+		multiplyWithChanEstCuBlas<< <gridDims1, maxThreads>> >(&Y[rows*cols], Hconj, Yf, Hsqrd, rows, cols, numberOfSymbolsToTest-1);
 	//	cudaDeviceSynchronize();
 	}
-	
-	dim3 blockDims2(numOfBlocks,ceil((float)maxThreads/(float)numOfBlocks));
-	dim3 gridDims2(ceil((float)(threadsPerBlock-1)/ceil((float)maxThreads/(float)numOfBlocks)), lenOfBuffer-1);
-	combineForMRC<< <gridDims2, blockDims2, maxThreads*sizeof(cuFloatComplex)>> >(Yf, Hsqrd, rows, cols-1);
-	cudaDeviceSynchronize();
 	if (cols <= maxThreads) {
-		shiftOneRow<< <(1,lenOfBuffer-1), ((threadsPerBlock-1),ceil((float)maxThreads/(float)(threadsPerBlock-1))), (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
-	//	cudaDeviceSynchronize();
+		dim3 gridDims3(1,lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, cols-1, (cols-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+		cudaDeviceSynchronize();
 	} else {
-		dim3 gridDims3(ceil((float)(threadsPerBlock-1)/(float)maxThreads), lenOfBuffer-1);
-		shiftOneRow<< <gridDims3, maxThreads, (maxThreads)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
-	//	cudaDeviceSynchronize();
+		dim3 gridDims3(ceil((float)cols/(float)maxThreads), lenOfBuffer-1);
+		shiftOneRow<< <gridDims3, maxThreads, (cols-1)*sizeof(cuFloatComplex)>> >(Yf, cols-1, rows);
+		cudaDeviceSynchronize();
 	}
 	cudaMemcpy(dY, Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*dY), cudaMemcpyDeviceToHost);
 	

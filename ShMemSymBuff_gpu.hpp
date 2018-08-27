@@ -190,7 +190,7 @@ class ShMemSymBuff{
 			complexF decodetime = findAvgAndVar(&decode[1], numberOfSymbolsToTest-1);
 			complexF FFTtime = findAvgAndVar(&fft[1], numberOfSymbolsToTest-1);
 			printf("\t \t Avg Time(s) \t Variance (s^2) \n");
-			printf("Read/Write: \t \t %e \t %e \n", readtime.real, readtime.imag);
+			printf("R/W: \t \t %e \t %e \n", readtime.real, readtime.imag);
 			printf("ChanEst: \t %e \n", (decode[0] + FFTtime.real + readtime.real));
 			printf("Mod/Demod: \t %e \t %e \n", decodetime.real, decodetime.imag);
 			printf("FFT: \t \t %e \t %e \n", FFTtime.real, FFTtime.imag);

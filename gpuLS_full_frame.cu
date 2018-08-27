@@ -82,8 +82,9 @@ int main(){
 	
 	gpu->copyPilotToGPU(dX, rows, cols);
 	
-	while (not stop_signal_called) {
+//	while (not stop_signal_called) {
 		start = clock();
+		
 		for (int it = 0; it < numberOfSymbolsToTest; it++) {
 			if(it==numberOfSymbolsToTest-1){
 				//if last one
@@ -106,8 +107,15 @@ int main(){
 			outfile.write((const char*)Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*Yf));
 			outfile.close();
 		}
+		/*
+		cudaDeviceReset();
+		cudaMalloc((void**)&Hsqrd, (cols-1)* sizeof (*Hsqrd));
+		cudaMalloc((void**)&dH, rows*(cols-1)* sizeof (*dH));
+		cudaMalloc((void**)&dX, rows*(cols-1)* sizeof (*dX));
+		cudaMalloc((void**)&Y, rows*cols*lenOfBuffer*sizeof(*Y));
+		*/
 		while ((((float)(clock() - start))/(float)CLOCKS_PER_SEC) < 1);
-	}
+//	}
 	
 	free(Yf);
 	free(dY);
@@ -116,7 +124,7 @@ int main(){
 	cudaFree(dX);
 	cudaFree(Hsqrd);
 	delete(gpu);
-	
+	cudaDeviceReset();
 	return 0;
 
 }
