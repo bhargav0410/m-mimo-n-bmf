@@ -58,17 +58,19 @@ class gpuLS {
 		
 		void shiftOneRowCPU(cuFloatComplex*, int, int);
 		
-		void ShiftOneRow(cuFloatComplex*, int, int, dim3, dim3);
+		void ShiftOneRow(cuFloatComplex*, int, int, dim3, dim3, cudaStream_t*);
 		
-		void DropPrefix(cuFloatComplex*, cuFloatComplex*, int, int, dim3, dim3);
+		void DropPrefix(cuFloatComplex*, cuFloatComplex*, int, int, dim3, dim3, cudaStream_t*);
 		
-		void FindLeastSquaresGPU(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, int, int, dim3, dim3);
+		void FindLeastSquaresGPU(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, int, int, dim3, dim3, cudaStream_t*);
 		
-		void FindHsqrdforMRC(cuFloatComplex*, float*, int, int, dim3, dim3);
+		void FindHsqrdforMRC(cuFloatComplex*, float*, int, int, dim3, dim3, cudaStream_t*);
 		
-		void MultiplyWithChannelConj(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, int, int, int, dim3, dim3);
+		void MultiplyWithChannelConj(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, int, int, int, dim3, dim3, cudaStream_t*);
 		
-		void CombineForMRC(cuFloatComplex*, float*, int, int, dim3, dim3);
+		void CombineForMRC(cuFloatComplex*, float*, int, int, dim3, dim3, cudaStream_t*);
+		
+		void batchedFFT(cuFloatComplex*, int, int, cudaStream_t*);
 
 		void firstVector(cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, cuFloatComplex*, float*, int, int, int);
 

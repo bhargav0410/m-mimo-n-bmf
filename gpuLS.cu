@@ -235,30 +235,36 @@ __global__ void combineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int co
 
 /*-----------------------------------GPU kernel calling functions--------------------------------------*/
 
-void gpuLS::ShiftOneRow(cuFloatComplex* Y, int cols1, int rows1, dim3 blockDim, dim3 gridDim) {
-	shiftOneRow<< <gridDim, blockDim>> >(Y, cols1, rows1);
+void gpuLS::ShiftOneRow(cuFloatComplex* Y, int cols1, int rows1, dim3 blockDim, dim3 gridDim, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream; 
+	shiftOneRow<< <gridDim, blockDim, 0, localStreamVar>> >(Y, cols1, rows1);
 }
 
-void gpuLS::DropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
-	dropPrefix<< <gridDim, blockDim>> >(Y, dY, rows1, cols1);
+void gpuLS::DropPrefix(cuFloatComplex *Y, cuFloatComplex *dY, int rows1, int cols1, dim3 blockDim, dim3 gridDim, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream;
+	dropPrefix<< <gridDim, blockDim, 0, localStreamVar>> >(Y, dY, rows1, cols1);
 }
 
-void gpuLS::FindLeastSquaresGPU(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
-	findHs<< <gridDim, blockDim>> >(dY, dH, dX, rows1, cols1);
+void gpuLS::FindLeastSquaresGPU(cuFloatComplex* dY, cuFloatComplex* dH, cuFloatComplex* dX, int rows1, int cols1, dim3 blockDim, dim3 gridDim, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream;
+	findHs<< <gridDim, blockDim, 0, localStreamVar>> >(dY, dH, dX, rows1, cols1);
 }
 
-void gpuLS::FindHsqrdforMRC(cuFloatComplex* H, float* Hsqrd, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
+void gpuLS::FindHsqrdforMRC(cuFloatComplex* H, float* Hsqrd, int rows1, int cols1, dim3 blockDim, dim3 gridDim, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream;
 	size_t sharedMemSize = blockDim.x*blockDim.y*blockDim.z;
-	findDistSqrd<< <gridDim, blockDim, sharedMemSize>> >(H, Hsqrd, rows1, cols1);
+	findDistSqrd<< <gridDim, blockDim, sharedMemSize, localStreamVar>> >(H, Hsqrd, rows1, cols1);
 }
 
-void gpuLS::MultiplyWithChannelConj(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Yf, int rows1, int cols1, int syms1, dim3 blockDim, dim3 gridDim) {
-	multiplyWithChannelConj<< <gridDim, blockDim>> >(Y, Hconj, Yf, rows1, cols1, syms1);
+void gpuLS::MultiplyWithChannelConj(cuFloatComplex* Y, cuFloatComplex* Hconj, cuFloatComplex* Yf, int rows1, int cols1, int syms1, dim3 blockDim, dim3 gridDim, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream;
+	multiplyWithChannelConj<< <gridDim, blockDim, 0, localStreamVar>> >(Y, Hconj, Yf, rows1, cols1, syms1);
 }
 
-void gpuLS::CombineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int cols1, dim3 blockDim, dim3 gridDim) {
+void gpuLS::CombineForMRC(cuFloatComplex* Y, float* Hsqrd, int rows1, int cols1, dim3 blockDim, dim3 gridDim, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream;
 	size_t sharedMemSize = blockDim.x*blockDim.y*blockDim.z;
-	combineForMRC<< <gridDim, blockDim, sharedMemSize>> >(Y, Hsqrd, rows1, cols1);
+	combineForMRC<< <gridDim, blockDim, sharedMemSize, localStreamVar>> >(Y, Hsqrd, rows1, cols1);
 }
 
 /*-----------------------------------CuBlas based functions--------------------------------------*/
@@ -308,6 +314,14 @@ __global__ void multiplyWithChanEstCuBlas(cuFloatComplex* Y, cuFloatComplex* Hco
 }
 
 /*-----------------------------------Host Functions--------------------------------------*/
+
+void gpuLS::batchedFFT(cuFloatComplex* Y, int rows, int cols, cudaStream_t* stream) {
+	cudaStream_t localStreamVar = *stream;
+	cufftHandle plan;
+	cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
+	cufftSeetStream(plan, localStreamVar);
+	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
+}
 
 void gpuLS::firstVector(cuFloatComplex* dY, cuFloatComplex* Y, cuFloatComplex* dH, cuFloatComplex* dX, float* Hsqrd, int rows, int cols, int it){
 	clock_t start, finish;

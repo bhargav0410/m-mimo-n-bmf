@@ -76,6 +76,7 @@ int main(){
 	cufftHandle plan;
 	cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
 	cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
+	cufftDestroy(plan);
 	cudaDeviceSynchronize();
 
 	std::signal(SIGINT, &sig_int_handler);
@@ -107,13 +108,16 @@ int main(){
 			outfile.write((const char*)Yf, (cols-1)*(lenOfBuffer-1)*sizeof(*Yf));
 			outfile.close();
 		}
-		/*
+		
 		cudaDeviceReset();
 		cudaMalloc((void**)&Hsqrd, (cols-1)* sizeof (*Hsqrd));
 		cudaMalloc((void**)&dH, rows*(cols-1)* sizeof (*dH));
 		cudaMalloc((void**)&dX, rows*(cols-1)* sizeof (*dX));
 		cudaMalloc((void**)&Y, rows*cols*lenOfBuffer*sizeof(*Y));
-		*/
+		cufftHandle plan;
+		cufftPlan1d(&plan, cols, CUFFT_C2C, rows);
+		cufftExecC2C(plan, (cufftComplex *)Y, (cufftComplex *)Y, CUFFT_FORWARD);
+		cufftDestroy(plan);
 		while ((((float)(clock() - start))/(float)CLOCKS_PER_SEC) < 1);
 //	}
 	

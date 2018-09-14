@@ -72,8 +72,8 @@ int main(){
 	
 	
 	//Shared Memory
-	string shm_uid = shmemID;
-	buffPtr=new ShMemSymBuff(shm_uid, mode);
+	//string shm_uid = shmemID;
+	//gpu->buffPtr = new ShMemSymBuff(shm_uid, mode);
 	
 	copyPilotToGPU(dX, rows, cols);
 	

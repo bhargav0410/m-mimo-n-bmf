@@ -90,9 +90,9 @@ class ShMemSymBuff{
 		//Time to drop prefix
 		float drop[numberOfSymbolsToTest];
 		float fft[numberOfSymbolsToTest];
+		cudaStream_t streams[lenOfBuffer];
 		
 	public:
-		
 		// Constructor - create a shared memory space for symbols
 		ShMemSymBuff(std::string shm_uid, int isMaster){
 			shm_bufPtr = new CSharedMemSimple(shm_uid, sizeof(struct symbolBuffer));
@@ -335,13 +335,20 @@ class ShMemSymBuff{
 		
 		#ifdef cudaEn
 		
-		cudaStream_t streams[lenOfBuffer];
+		cudaStream_t * createStream(int it) {
+			cudaStreamCreate(&streams[it]);
+			return &streams[it];
+		}
+		
+		void destroyStream(int it) {
+			cudaStreamDestroy(stream[it]);
+		}
+		
 		//Read symbol into device memory with prefix
 		template <typename T>
 		inline void readNextSymbolCUDA(T* dY, int it){
 			int rows = numOfRows;
 			int cols = dimension;
-			cudaStreamCreate(&streams[it]);
 			//writePtr==-1 to start
 			while(buff->writePtr ==-1);
 			//can't read until writer writes
